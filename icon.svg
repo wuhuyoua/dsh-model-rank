@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Model Rank">
+  <defs>
+    <linearGradient id="mr-bar" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#2f7cf6"/>
+      <stop offset="1" stop-color="#3fd3b0"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="none" stroke="url(#mr-bar)" stroke-width="2.5"/>
+  <rect x="13" y="36" width="8" height="13" rx="2.5" fill="#2f7cf6" opacity="0.55"/>
+  <rect x="26" y="28" width="8" height="21" rx="2.5" fill="#2f7cf6" opacity="0.8"/>
+  <rect x="39" y="18" width="8" height="31" rx="2.5" fill="#3fd3b0"/>
+  <path d="M40 14.5l2.6 2.6 5.2-5.4" fill="none" stroke="#3fd3b0" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

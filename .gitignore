@@ -1,0 +1,11 @@
+# Dependencies (this bundle ships none, but a local install may create them)
+node_modules/
+
+# Reports and logs are user data, never repository content
+*.log
+report.json
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini

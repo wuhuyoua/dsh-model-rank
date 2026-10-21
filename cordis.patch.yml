@@ -1,0 +1,9 @@
+# dsh-model-rank bundle patch.
+#
+# One row mounts the Host half (inventory, probes, HTTP API, model_rank tool);
+# the browser half is declared by package.json's dsh.client and binds to the
+# row named by the bare package name.
+- insert:
+    - id: model-rank
+      name: dsh-model-rank
+      config: {}

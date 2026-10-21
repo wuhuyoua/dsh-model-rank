@@ -1,0 +1,60 @@
+{
+  "name": "dsh-model-rank",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Benchmark every LLM route mounted in DeepSeek Harness and rank the models by availability, remaining quota, capability and speed — with a top-five panel under the composer and a model_rank tool for the agent.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "llm",
+    "benchmark",
+    "model-selection"
+  ],
+  "license": "MIT",
+  "author": "wuhuyoua",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wuhuyoua/dsh-model-rank.git"
+  },
+  "homepage": "https://github.com/wuhuyoua/dsh-model-rank#readme",
+  "bugs": {
+    "url": "https://github.com/wuhuyoua/dsh-model-rank/issues"
+  },
+  "scripts": {
+    "test": "node scripts/selftest.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "src",
+    "scripts",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  }
+}
