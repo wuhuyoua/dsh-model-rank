@@ -1,11 +1,11 @@
 {
   "meta": {
     "title": "模型优选",
-    "description": "实测当前 Harness 里所有已挂载的模型路由，按可用性、剩余额度、能力与速度加权排序，给出首选模型建议。"
+    "description": "实测当前 Harness 里所有已挂载的模型路由，按可用性、首字延迟、吞吐、能力与额度加权排序，给出首选模型建议。"
   },
   "nav": "模型优选",
   "title": "模型优选",
-  "subtitle": "实测每个已挂载的提供方与模型，按可用性、剩余额度、能力、速度加权排名。",
+  "subtitle": "实测每个已挂载的提供方与模型，按可用性、首字延迟、吞吐、能力与额度加权排名。",
   "run": "开始测试",
   "stop": "停止",
   "mode": "模式",
@@ -22,7 +22,7 @@
   "colScore": "综合",
   "colAvailability": "可用性",
   "colTtft": "首字",
-  "colSpeed": "速度",
+  "colThroughput": "吞吐",
   "colCapability": "能力",
   "colQuota": "额度",
   "statusOk": "可用",
@@ -45,7 +45,7 @@
   "detailReasoning": "推理",
   "detailTokens": "输出 token",
   "detailTotal": "总耗时",
-  "weights": "权重：可用性 {a}% · 速度 {s}% · 能力 {c}% · 额度 {q}%",
+  "weights": "权重：可用性 {a}% · 首字 {t}% · 吞吐 {p}% · 能力 {c}% · 额度 {q}%",
   "hint": "快速模式每模型 1 次极小请求，适合日常体检；深度模式 4 项确定性任务，更准但更耗额度。",
   "refresh": "刷新",
   "expand": "展开",

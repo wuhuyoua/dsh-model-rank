@@ -26,7 +26,9 @@ import {
   capabilityScore,
   normalizeWeights,
   quotaScoreOf,
-  speedScore,
+  ttftScore,
+  throughputScore,
+  availabilityScore,
   withRanks,
 } from './scoring.js'
 
@@ -44,24 +46,27 @@ const TARGETS_TTL_MS = 5 * 60_000
 /**
  * The deterministic capability tasks.
  *
- * `quick` tasks run in both modes; the others only in deep mode. Each prompt is
- * answerable by any working chat model, and each check accepts harmless
- * formatting differences instead of demanding verbatim output.
+ * `quick` tasks run in both modes; the others only in deep mode.
+ * Each task has a weight for the capability score (sum = 1.0 in deep mode).
+ * quick mode runs only the first task (OK).
  */
 const TASKS = [
   {
     id: 'ok',
     quick: true,
+    weight: 0.15,
     prompt: 'Reply with exactly OK and nothing else.',
     check: text => /^\W*ok\W*$/i.test(text.trim()),
   },
   {
     id: 'math',
+    weight: 0.20,
     prompt: 'What is 17 multiplied by 23? Answer with only the number.',
     check: text => /(^|\D)391(\D|$)/.test(text.replace(/,/g, '')),
   },
   {
     id: 'json',
+    weight: 0.25,
     prompt: 'Return exactly this JSON object and nothing else: {"city":"Paris","ok":true}',
     check: text => {
       const match = text.match(/\{[\s\S]*\}/)
@@ -76,8 +81,15 @@ const TASKS = [
   },
   {
     id: 'zh',
+    weight: 0.20,
     prompt: '把「蓝色」这个词重复三次，用单个空格分隔，只输出结果，不要任何解释。',
     check: text => (text.match(/蓝色/g) ?? []).length === 3,
+  },
+  {
+    id: 'reason',
+    weight: 0.20,
+    prompt: '分步推理：从北京坐高铁到上海要多久？只输出最终结论（数字+单位）。',
+    check: text => /(\d+(\.\d+)?\s*(小时|分钟|h|min))/i.test(text),
   },
 ]
 
@@ -178,6 +190,7 @@ function toTaskView(task) {
     totalMs: task.totalMs,
     outputTokens: task.outputTokens,
     tokensPerSecond: task.tokensPerSecond,
+    chunkCount: task.chunkCount,
     text: typeof task.text === 'string' ? task.text.slice(0, 200) : '',
     failure: task.failure,
   }
@@ -359,6 +372,7 @@ export function createBench({ ctx, logger = console, config = {} }) {
     let usage = null
     let finish = null
     let answered = false
+    let chunkCount = 0
     try {
       let prepared
       try {
@@ -380,6 +394,7 @@ export function createBench({ ctx, logger = console, config = {} }) {
           totalMs: Date.now() - started,
           text: '',
           usage,
+          chunkCount: 0,
           failure: describeFailure(error),
         }
       }
@@ -389,6 +404,7 @@ export function createBench({ ctx, logger = console, config = {} }) {
         signal: callSignal,
       })
       for await (const chunk of stream) {
+        chunkCount++
         if (chunk?.type === 'text-delta' || chunk?.type === 'reasoning-delta') {
           if (ttftMs === 0 && typeof chunk.text === 'string' && chunk.text.length > 0) {
             ttftMs = Date.now() - started
@@ -412,6 +428,7 @@ export function createBench({ ctx, logger = console, config = {} }) {
           totalMs: finished - started,
           text: text.slice(0, 500),
           usage,
+          chunkCount,
           failure: describeFailure({ message: failure.message, code: failure.code, status: failure.status }),
         }
       }
@@ -430,6 +447,7 @@ export function createBench({ ctx, logger = console, config = {} }) {
         text: text.slice(0, 500),
         outputTokens,
         tokensPerSecond: outputTokens / (windowMs / 1000),
+        chunkCount,
         usage,
         finish: finish?.kind ?? 'unknown',
         failure: available
@@ -491,7 +509,8 @@ export function createBench({ ctx, logger = console, config = {} }) {
           reasoning,
           totalMs: Date.now() - started,
           quotaScore: base.quota.score,
-          speedScore: 0,
+          ttftScore: 0,
+          throughputScore: 0,
           capabilityScore: 0,
           score: 0,
         }
@@ -503,7 +522,12 @@ export function createBench({ ctx, logger = console, config = {} }) {
     const answered = tasks.some(task => task.answered)
     const totalMs = Date.now() - started
     const okCount = tasks.filter(task => task.ok).length
-    const taskScore = (okCount / Math.max(1, tasks.length)) * 100
+    // Weighted task score: sum of (weight * pass) for deep mode, simple ratio for quick
+    const totalWeight = plan.reduce((sum, task) => sum + task.weight, 0)
+    const earnedWeight = tasks
+      .filter((_, i) => plan[i] && tasks[i]?.ok)
+      .reduce((sum, task, i) => sum + (plan[i]?.weight ?? 0), 0)
+    const taskScore = totalWeight > 0 ? (earnedWeight / totalWeight) * 100 : (okCount / Math.max(1, tasks.length)) * 100
     const outputTokens = tasks.reduce((sum, task) => sum + (task.outputTokens ?? 0), 0)
     const inputTokens = tasks.reduce((sum, task) => sum + (task.usage?.inputTokens ?? 0), 0)
     const rateSamples = tasks.filter(task => Number.isFinite(task.tokensPerSecond) && task.tokensPerSecond > 0)
@@ -511,6 +535,10 @@ export function createBench({ ctx, logger = console, config = {} }) {
       ? rateSamples.reduce((sum, task) => sum + task.tokensPerSecond, 0) / rateSamples.length
       : 0
     const text = first?.text ?? ''
+    // Average chunk count per task (for burst penalty)
+    const chunkCount = tasks.length > 0
+      ? tasks.reduce((sum, task) => sum + (task.chunkCount ?? 0), 0) / tasks.length
+      : 0
     const row = {
       ...base,
       status: answered ? 'ok' : 'error',
@@ -520,6 +548,7 @@ export function createBench({ ctx, logger = console, config = {} }) {
       outputTokens,
       inputTokens,
       tokensPerSecond,
+      chunkCount,
       text,
       sample: text.slice(0, 120),
       tasks: tasks.map(toTaskView),
@@ -528,7 +557,8 @@ export function createBench({ ctx, logger = console, config = {} }) {
       taskScore,
     }
     row.capabilityScore = capabilityScore({ taskScore, contextWindow, reasoning })
-    row.speedScore = row.status === 'ok' ? speedScore(row) : 0
+    row.ttftScore = row.status === 'ok' ? ttftScore(row.ttftMs) : 0
+    row.throughputScore = row.status === 'ok' ? throughputScore(row.tokensPerSecond, row.chunkCount) : 0
     row.quotaScore = row.quota.score
     row.score = compositeScore(row, weights)
     return row
@@ -672,7 +702,7 @@ export function createBench({ ctx, logger = console, config = {} }) {
     const lines = [
       `模型优选结果（${run.mode === 'deep' ? '深度模式' : '快速模式'}，${when}，共 ${rows.length} 个）`,
       '',
-      '| # | 模型 | 提供方 | 综合 | 可用性 | 首字 | 速度 | 能力 | 额度 |',
+      '| # | 模型 | 提供方 | 综合 | 可用性 | 首字 | 吞吐 | 能力 | 额度 |',
       '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
     ]
     for (const row of rows) {

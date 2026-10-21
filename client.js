@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
       en: {
         nav: 'Model Rank',
         title: 'Model Rank',
-        subtitle: 'Every mounted model, measured and ranked by availability, remaining quota, capability and speed.',
+        subtitle: 'Every mounted model, measured and ranked by availability, time-to-first-token, throughput, capability and quota.',
         run: 'Run test',
         stop: 'Stop',
         mode: 'Mode',
@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
         colScore: 'Score',
         colAvailability: 'Status',
         colTtft: 'TTFT',
-        colSpeed: 'Speed',
+        colThroughput: 'Throughput',
         colCapability: 'Capability',
         colQuota: 'Quota',
         statusOk: 'OK',
@@ -63,7 +63,7 @@ window.__ModuleLoader__.load({
         detailTotal: 'Total time',
         detailModalities: 'Inputs',
         detailProvider: 'Provider route',
-        weights: 'Availability {a}% · Speed {s}% · Capability {c}% · Quota {q}%',
+        weights: 'Availability {a}% · TTFT {t}% · Throughput {p}% · Capability {c}% · Quota {q}%',
         hint: 'Quick mode sends one tiny request per model for everyday checks; deep mode adds three more deterministic tasks.',
         refresh: 'Refresh',
         expand: 'Details',
@@ -89,10 +89,17 @@ window.__ModuleLoader__.load({
         dockCurrent: 'Default: {model}',
         dockApplyFailed: 'Switch failed: {message}',
         useThis: 'Use',
+        favorite: 'Favorite',
+        unfavorite: 'Unfavorite',
+        favorites: 'Favorites',
+        noFavorites: 'No favorites yet. Click the star on a row to pin it.',
+        recentLabel: 'Recent',
+        recentEmpty: 'No recent models.',
         taskOk: 'Instruction',
         taskMath: 'Arithmetic',
         taskJson: 'JSON output',
         taskZh: 'Chinese instruction',
+        taskReason: 'Reasoning',
         yes: 'yes',
         no: 'no',
         providerError: 'Provider failed to enumerate',
@@ -117,7 +124,7 @@ window.__ModuleLoader__.load({
         colScore: '综合',
         colAvailability: '状态',
         colTtft: '首字',
-        colSpeed: '速度',
+        colThroughput: '吞吐',
         colCapability: '能力',
         colQuota: '额度',
         statusOk: '可用',
@@ -143,7 +150,7 @@ window.__ModuleLoader__.load({
         detailTotal: '总耗时',
         detailModalities: '输入模态',
         detailProvider: '提供方路由',
-        weights: '可用性 {a}% · 速度 {s}% · 能力 {c}% · 额度 {q}%',
+        weights: '可用性 {a}% · 首字 {t}% · 吞吐 {p}% · 能力 {c}% · 额度 {q}%',
         hint: '快速模式每模型 1 次极小请求，适合日常体检；深度模式再加 3 项确定性任务，更准但更耗额度。',
         refresh: '刷新',
         expand: '明细',
@@ -169,10 +176,17 @@ window.__ModuleLoader__.load({
         dockCurrent: '默认：{model}',
         dockApplyFailed: '切换失败：{message}',
         useThis: '用这个',
+        favorite: '收藏',
+        unfavorite: '取消收藏',
+        favorites: '收藏夹',
+        noFavorites: '还没有收藏。点击行上的星标固定常用模型。',
+        recentLabel: '常用',
+        recentEmpty: '暂无常用模型。',
         taskOk: '指令遵循',
         taskMath: '算术',
         taskJson: 'JSON 输出',
         taskZh: '中文指令',
+        taskReason: '推理',
         yes: '是',
         no: '否',
         providerError: '提供方枚举失败',
@@ -412,6 +426,18 @@ window.__ModuleLoader__.load({
 .mr-scoretext-idle { color: var(--dsw-alias-label-secondary); }
 .mr-scoretext-error { color: var(--dsw-alias-state-error-primary); }
 .mr-dock-hint { font-size: 10.5px; }
+.mr-dock-recent { display: inline-flex; }
+.mr-dock-recent-select { height: 24px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 11.5px; cursor: pointer; min-width: 160px; max-width: 220px; }
+.mr-dock-recent-select:hover { border-color: var(--dsw-alias-brand-primary); }
+.mr-dock-recent-select:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.mr-star { cursor: pointer; font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 4px; color: var(--dsw-alias-label-secondary); }
+.mr-star:hover { color: var(--dsw-alias-brand-primary); background: var(--dsw-alias-bg-layer-2); }
+.mr-star.filled { color: #ffb300; }
+.mr-fav-col { width: 28px; text-align: center; }
+.mr-fav-btn { all: unset; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 4px; font-size: 14px; line-height: 1; }
+.mr-fav-btn:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-brand-primary); }
+.mr-fav-btn.filled { color: #ffb300; }
+.mr-fav-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
 `
 
     // ── page ────────────────────────────────────────────────────────────────
@@ -429,7 +455,25 @@ window.__ModuleLoader__.load({
       const [sort, setSort] = useState({ key: 'score', direction: 'desc' })
       const [open, setOpen] = useState(() => new Set())
       const [appliedKey, setAppliedKey] = useState('')
+      const [favorites, setFavorites] = useState(() => {
+        try { return new Set(JSON.parse(localStorage.getItem('model-rank-favorites') || '[]')) } catch { return new Set() }
+      })
+      const [showFavoritesOnly, setShowFavoritesOnly] = useState(false)
       const inFlight = useRef(false)
+
+      const persistFavorites = useCallback(() => {
+        try { localStorage.setItem('model-rank-favorites', JSON.stringify([...favorites])) } catch {}
+      }, [favorites])
+
+      const toggleFavorite = useCallback(key => {
+        setFavorites(prev => {
+          const next = new Set(prev)
+          if (next.has(key)) next.delete(key)
+          else next.add(key)
+          persistFavorites()
+          return next
+        })
+      }, [persistFavorites])
 
       const load = useCallback(async () => {
         if (inFlight.current) return
@@ -497,9 +541,12 @@ window.__ModuleLoader__.load({
 
       const rows = useMemo(() => {
         const all = Array.isArray(state?.rows) ? state.rows : []
-        const filtered = provider === '' ? all : all.filter(row => row.provider === provider)
+        let filtered = provider === '' ? all : all.filter(row => row.provider === provider)
+        if (showFavoritesOnly) {
+          filtered = filtered.filter(row => favorites.has(row.key))
+        }
         return sortRows(filtered, sort.key, sort.direction)
-      }, [provider, sort, state?.rows])
+      }, [provider, sort, showFavoritesOnly, state?.rows, favorites])
 
       const providers = useMemo(() => {
         const list = Array.isArray(state?.providers) ? state.providers : []
@@ -514,7 +561,7 @@ window.__ModuleLoader__.load({
       const running = state?.running === true
       const progress = state?.progress ?? { done: 0, total: 0, current: '' }
       const percent = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
-      const weights = state?.weights ?? { availability: 0.4, speed: 0.25, capability: 0.25, quota: 0.1 }
+      const weights = state?.weights ?? { availability: 0.45, ttft: 0.20, throughput: 0.10, capability: 0.15, quota: 0.10 }
 
       const toggleRow = useCallback(key => {
         setOpen(current => {
@@ -626,6 +673,14 @@ window.__ModuleLoader__.load({
             },
             h('option', { value: '' }, t('providerAll')),
             providers.map(item => h('option', { key: item.id, value: item.id }, item.name)))),
+          h('label', { className: 'mr-field' },
+            h('span', { className: 'mr-field-label' }, t('favorites')),
+            h('input', {
+              type: 'checkbox',
+              checked: showFavoritesOnly,
+              disabled: running,
+              onChange: event => setShowFavoritesOnly(event.target.checked),
+            })),
           h('div', { className: 'mr-spacer' }),
           h('button', {
             type: 'button',
@@ -666,8 +721,9 @@ window.__ModuleLoader__.load({
                     header('score', t('colScore')),
                     header('availability', t('colAvailability')),
                     header('ttftMs', t('colTtft')),
-                    header('tokensPerSecond', t('colSpeed')),
+                    header('tokensPerSecond', t('colThroughput')),
                     header('capabilityScore', t('colCapability')),
+                    h('th', { key: 'favorite', className: 'mr-fav-col' }, t('favorite')),
                     h('th', { key: 'quota' }, t('colQuota')))),
                 h('tbody', {},
                   rows.map(row => {
@@ -706,6 +762,16 @@ window.__ModuleLoader__.load({
                       h('td', { key: 'ttft', className: 'mr-num' }, formatMs(row.ttftMs)),
                       h('td', { key: 'tps', className: 'mr-num' }, formatRate(row.tokensPerSecond)),
                       h('td', { key: 'cap', className: 'mr-num' }, row.capabilityScore ?? '—'),
+                      h('td', { key: 'favorite', className: 'mr-fav-col' },
+                        h('button', {
+                          type: 'button',
+                          className: 'mr-fav-btn' + (favorites.has(row.key) ? ' filled' : ''),
+                          title: favorites.has(row.key) ? t('unfavorite') : t('favorite'),
+                          onClick: event => {
+                            event.stopPropagation()
+                            toggleFavorite(row.key)
+                          },
+                        }, h('span', {}, favorites.has(row.key) ? '★' : '☆'))),
                       h('td', { key: 'quota', className: 'mr-muted' }, quotaText(locale, row)),
                     ]
                     const main = h('tr', {
@@ -737,7 +803,16 @@ window.__ModuleLoader__.load({
                               event.stopPropagation()
                               void applyRow(row)
                             },
-                          }, appliedKey === row.key ? t('dockApplied', { model: row.model }) : t('useThis')))),
+                          }, appliedKey === row.key ? t('dockApplied', { model: row.model }) : t('useThis'))),
+                          detailItem(t('favorite'), h('button', {
+                            type: 'button',
+                            className: 'mr-btn',
+                            title: favorites.has(row.key) ? t('unfavorite') : t('favorite'),
+                            onClick: event => {
+                              event.stopPropagation()
+                              toggleFavorite(row.key)
+                            },
+                          }, favorites.has(row.key) ? t('unfavorite') : t('favorite')))),
                         (row.tasks ?? []).length > 0
                           ? h('div', { className: 'mr-tasks' },
                             row.tasks.map(task => h('span', {
@@ -755,7 +830,8 @@ window.__ModuleLoader__.load({
         h('div', { className: 'mr-foot' },
           h('span', {}, t('weights', {
             a: Math.round(weights.availability * 100),
-            s: Math.round(weights.speed * 100),
+            t: Math.round(weights.ttft * 100),
+            p: Math.round(weights.throughput * 100),
             c: Math.round(weights.capability * 100),
             q: Math.round(weights.quota * 100),
           })),
@@ -796,6 +872,15 @@ window.__ModuleLoader__.load({
       const [applying, setApplying] = useState(false)
       const [applied, setApplied] = useState('')
       const [error, setError] = useState('')
+      const [recentModels, setRecentModels] = useState(() => {
+        try {
+          const recent = JSON.parse(localStorage.getItem('model-rank-recent') || '[]')
+          const favs = JSON.parse(localStorage.getItem('model-rank-favorites') || '[]')
+          // 合并收藏 + 最近使用，去重，收藏优先（统一用 \u0000 分隔符）
+          const merged = [...favs, ...recent].filter((v, i, a) => a.indexOf(v) === i)
+          return merged.slice(0, 10)
+        } catch { return [] }
+      })
       const inFlight = useRef(false)
 
       const load = useCallback(async () => {
@@ -867,7 +952,17 @@ window.__ModuleLoader__.load({
           })
           if (result?.state !== undefined) setState(result.state)
           const selected = result?.selected ?? { provider: row.provider, model: row.model }
+          const key = `${selected.provider}\u0000${selected.model}`
           setApplied(`${selected.provider}/${selected.model}`)
+          // Save to recent models, but keep favorites in the merged list
+          setRecentModels(prev => {
+            const recent = [key, ...prev.filter(r => r !== key)].slice(0, 5)
+            try { localStorage.setItem('model-rank-recent', JSON.stringify(recent)) } catch {}
+            // Merge with favorites (favorites first, then recent, dedup)
+            const favs = JSON.parse(localStorage.getItem('model-rank-favorites') || '[]')
+            const merged = [...favs, ...recent].filter((v, i, a) => a.indexOf(v) === i)
+            return merged.slice(0, 10)
+          })
         } catch (cause) {
           setError(t('dockApplyFailed', { message: String(cause?.message ?? cause) }))
         } finally {
@@ -915,6 +1010,57 @@ window.__ModuleLoader__.load({
             title: best === undefined ? t('dockEmpty') : t('dockUseTitle', { model: best.name ?? best.model }),
             onClick: () => void use(best),
           }, applying ? t('dockUsing') : t('dockUse')),
+          recentModels.length > 0
+            ? h('div', { className: 'mr-dock-recent' },
+                h('select', {
+                  className: 'mr-dock-recent-select',
+                  defaultValue: '',
+                  onChange: event => {
+                    const idx = Number(event.target.value)
+                    if (!isNaN(idx) && idx >= 0 && idx < recentModels.length) {
+                      const key = recentModels[idx]
+                      const [provider, model] = key.split('\u0000')
+                      const row = state?.rows?.find(r => r.provider === provider && r.model === model)
+                      if (row) void use(row)
+                      else {
+                        // Not in current results, try to apply directly
+                        setApplying(true)
+                        setError('')
+                        void call('/apply', {
+                          method: 'POST',
+                          body: JSON.stringify({ provider, model }),
+                        }).then(result => {
+                          if (result?.state !== undefined) setState(result.state)
+                          const selected = result?.selected ?? { provider, model }
+                          setApplied(`${selected.provider}/${selected.model}`)
+                        }).catch(cause => {
+                          setError(t('dockApplyFailed', { message: String(cause?.message ?? cause) }))
+                        }).finally(() => setApplying(false))
+                      }
+                    }
+                    event.target.value = ''
+                  },
+                  title: t('recentLabel'),
+                  onFocus: () => {
+                    // Re-read from localStorage to pick up favorites changes
+                    try {
+                      const recent = JSON.parse(localStorage.getItem('model-rank-recent') || '[]')
+                      const favs = JSON.parse(localStorage.getItem('model-rank-favorites') || '[]')
+                      const merged = [...favs, ...recent].filter((v, i, a) => a.indexOf(v) === i).slice(0, 10)
+                      setRecentModels(merged)
+                    } catch {}
+                  },
+                },
+                  h('option', { value: '', disabled: true, selected: true }, t('recentLabel')),
+                  recentModels.map((key, idx) => {
+                    const [provider, model] = key.split('\u0000')
+                    const row = state?.rows?.find(r => r.provider === provider && r.model === model)
+                    const favs = JSON.parse(localStorage.getItem('model-rank-favorites') || '[]')
+                    const isFav = favs.includes(key)
+                    return h('option', { key, value: String(idx) }, `${isFav ? '★ ' : ''}${row?.name ?? model} (${provider})`)
+                  }))
+              )
+            : null,
           open
             ? h('button', { type: 'button', className: 'mr-btn mr-dock-close', onClick: () => setOpen(false) }, t('dockCollapse'))
             : null),
