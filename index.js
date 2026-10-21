@@ -29,10 +29,11 @@ const MAX_BODY_BYTES = 64 * 1024
 export function apply(ctx, config = {}) {
   const logger = ctx.logger ?? console
   const bench = createBench({ ctx, logger, config })
+  const applySelection = createApplier(ctx, logger)
 
   ctx.effect(() => () => bench.dispose(), 'model-rank: engine')
 
-  ctx.effect(() => ctx.tools.register(toolDefinition(bench)), 'model-rank: model_rank tool')
+  ctx.effect(() => ctx.tools.register(toolDefinition(bench, applySelection)), 'model-rank: model_rank tool')
 
   ctx.inject(['webServer'], scoped => {
     const fence = createFence(() => (typeof ctx.get === 'function' ? ctx.get('connection') : undefined))
@@ -40,7 +41,7 @@ export function apply(ctx, config = {}) {
       () => scoped.webServer.register({
         kind: 'prefix',
         path: '/api/model-rank',
-        handler: createRoutes(bench, fence, logger),
+        handler: createRoutes(bench, fence, logger, applySelection),
       }),
       'model-rank: http api',
     )
@@ -48,9 +49,55 @@ export function apply(ctx, config = {}) {
   })
 }
 
+// ── applying a ranked model ───────────────────────────────────────────────────
+
+/**
+ * Install one selection, the same way the composer's model picker does.
+ *
+ * With a `sessionId` the session controller resumes that session, switches its
+ * model, and saves the default in the background. Without one (the settings
+ * page has no session), the default selection is written directly so new
+ * sessions open on the chosen route.
+ */
+function createApplier(ctx, logger) {
+  const optional = name => (typeof ctx.get === 'function' ? ctx.get(name) : undefined)
+
+  return async function applySelection({ provider, model, sessionId }) {
+    const providerId = String(provider ?? '').trim()
+    const modelId = String(model ?? '').trim()
+    if (providerId === '' || modelId === '') throw Object.assign(new Error('a provider and a model are required'), { code: 'BAD_SELECTION' })
+
+    // Validate before touching any persisted selection: an unknown route must
+    // not end up as the saved default.
+    const info = await ctx.llm.resolveModelInfo(providerId, modelId)
+
+    // Keep the reasoning effort only when the target model lists that effort:
+    // a complete selection is saved, so dropping it would silently downgrade.
+    const current = optional('agentDefaultModel')?.currentSelection?.()
+    const effort = current?.reasoningEffort
+    const supported = effort !== undefined && (info?.reasoning?.efforts ?? []).some(item => item.id === effort)
+    const selection = { provider: providerId, model: modelId, ...(supported ? { reasoningEffort: effort } : {}) }
+
+    const sessions = optional('sessionController')
+    if (typeof sessionId === 'string' && sessionId !== '' && typeof sessions?.selectModel === 'function') {
+      const value = await sessions.selectModel({ sessionId, ...selection })
+      logger.info?.(`model-rank: session ${sessionId} switched to ${providerId}/${modelId}`)
+      return { mode: 'session', sessionId, selected: value?.selected ?? selection }
+    }
+
+    const defaults = optional('agentDefaultModel')
+    if (typeof defaults?.saveSelection !== 'function') {
+      throw Object.assign(new Error('no model selection service is mounted'), { code: 'NO_SELECTOR' })
+    }
+    await defaults.saveSelection(selection)
+    logger.info?.(`model-rank: default model set to ${providerId}/${modelId}`)
+    return { mode: 'default', selected: defaults.currentSelection?.() ?? selection }
+  }
+}
+
 // ── HTTP surface ──────────────────────────────────────────────────────────────
 
-function createRoutes(bench, fence, logger) {
+function createRoutes(bench, fence, logger, applySelection) {
   return async function handler(req, res) {
     const send = (status, payload) => {
       const body = JSON.stringify(payload)
@@ -107,6 +154,22 @@ function createRoutes(bench, fence, logger) {
         return send(200, { ok: cancelled, state: bench.snapshot() })
       }
 
+      if (method === 'POST' && route === '/apply') {
+        const body = await readJson(req)
+        try {
+          const applied = await applySelection({
+            provider: body?.provider,
+            model: body?.model,
+            sessionId: body?.sessionId,
+          })
+          return send(200, { ok: true, ...applied, state: bench.snapshot() })
+        } catch (error) {
+          const code = error?.code === 'BAD_SELECTION' ? 400 : 409
+          logger.warn?.(`model-rank: apply rejected (${error?.message ?? error})`)
+          return send(code, { error: String(error?.message ?? error) })
+        }
+      }
+
       if (method === 'GET' && route === '/report') {
         if (new URL(req.url ?? '/', 'http://localhost').searchParams.get('format') === 'md') {
           const body = bench.reportText()
@@ -152,15 +215,16 @@ function readJson(req) {
 
 // ── model-facing tool ────────────────────────────────────────────────────────
 
-function toolDefinition(bench) {
+function toolDefinition(bench, applySelection) {
   return {
     name: 'model_rank',
     description: [
-      'Test every LLM route currently mounted in this Harness and rank them.',
+      'Test every LLM route currently mounted in this Harness and rank them, or switch this conversation to the best one.',
       '`action: list` reports the provider routes and the models they advertise (no requests are sent).',
       '`action: status` returns the last run, including progress while a run is going.',
       '`action: run` sends real, tiny requests: quick mode = 1 request per model (availability, first-token latency, streamed speed, one instruction check); deep mode = 4 deterministic tasks (instruction, arithmetic, JSON, Chinese) for a finer capability score.',
       '`action: report` returns the last ranked table without measuring again.',
+      '`action: apply` switches the current Session to the top-ranked model (or the `provider`/`model` given), which also saves it as the default for new Sessions. It needs an existing result: run first.',
       'Ranking blends availability 40%, speed 25%, capability 25% and provider-reported quota 10%. Quota is only known for routes that publish a wallet (DeepSeek account) or an unmetered free lane; other routes score neutral and show "未报告".',
       'Use `limit` to bound cost, and `mode: "quick"` unless the user asks for a thorough comparison.',
     ].join(' '),
@@ -170,8 +234,8 @@ function toolDefinition(bench) {
       properties: {
         action: {
           type: 'string',
-          enum: ['list', 'status', 'run', 'report'],
-          description: 'list = inventory only; status = current/last run; run = measure now; report = last ranked table.',
+          enum: ['list', 'status', 'run', 'report', 'apply'],
+          description: 'list = inventory only; status = current/last run; run = measure now; report = last ranked table; apply = switch to the best measured model.',
         },
         mode: {
           type: 'string',
@@ -195,6 +259,14 @@ function toolDefinition(bench) {
           maximum: 6,
           description: 'Parallel probes (default 3). Higher finishes sooner but is more likely to trip provider rate limits.',
         },
+        provider: {
+          type: 'string',
+          description: 'For action: apply — the provider route to switch to. Omit to use rank #1.',
+        },
+        model: {
+          type: 'string',
+          description: 'For action: apply — the model id to switch to. Omit to use rank #1.',
+        },
       },
       required: ['action'],
     },
@@ -204,7 +276,7 @@ function toolDefinition(bench) {
         return [{ type: 'text', text: String(value?.text ?? '') }]
       },
     },
-    async execute(args) {
+    async execute(args, exec) {
       const action = String(args?.action ?? 'status')
       if (action === 'list') {
         const inventory = await bench.enumerate()
@@ -262,6 +334,38 @@ function toolDefinition(bench) {
           text: [lead, ...notes, '', bench.reportText()].join('\n'),
           rows: state.rows.length,
           available: ok,
+        }
+      }
+
+      if (action === 'apply') {
+        const state = bench.snapshot()
+        const best = state.rows[0]
+        if (best === undefined) {
+          return { action, text: '还没有测试结果，先运行 model_rank(action: "run") 再切换。' }
+        }
+        const provider = String(args?.provider ?? best.provider ?? '')
+        const model = String(args?.model ?? best.model ?? '')
+        if (provider === '' || model === '') {
+          return { action, text: '没有可用的模型选择：请在 args 里给出 provider 和 model。' }
+        }
+        if (args?.provider === undefined && best.status !== 'ok') {
+          return { action, text: '排名第一的模型不可用（全部测试失败），没有可切换的目标。' }
+        }
+        try {
+          const applied = await applySelection({ provider, model, sessionId: exec?.agent?.id })
+          const selected = applied.selected ?? { provider, model }
+          const scope = applied.mode === 'session' ? '当前会话' : '默认模型'
+          const explicit = args?.provider !== undefined || args?.model !== undefined
+          return {
+            action,
+            text: explicit
+              ? `已切换到 ${selected.provider}/${selected.model}（${scope}）。`
+              : `已切换到 ${selected.provider}/${selected.model}（${scope}），它就是当前排名第一的模型。`,
+            selected,
+            scope: applied.mode,
+          }
+        } catch (error) {
+          return { action, text: `切换失败：${error?.message ?? error}` }
         }
       }
 

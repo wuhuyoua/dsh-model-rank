@@ -332,8 +332,7 @@ export function createBench({ ctx, logger = console, config = {} }) {
   }
 
   /** Quota score for one row's provider, using the current snapshot. */
-  function quotaFor(providerId) {
-    const kind = providerKind(providerId)
+  function quotaFor(providerId) {    const kind = providerKind(providerId)
     if (kind === 'free') return { kind, score: quotaScoreOf({ kind: 'free' }), text: '' }
     if (kind === 'balance' && quota.kind === 'balance' && Number.isFinite(quota.total)) {
       return { kind: 'balance', score: quotaScoreOf({ kind: 'balance', balance: quota.total }), text: quota.text }
@@ -630,6 +629,22 @@ export function createBench({ ctx, logger = console, config = {} }) {
     return false
   }
 
+  /** The deployment's saved default model, when the service is mounted. */
+  function readDefaultSelection() {
+    try {
+      const service = typeof ctx.get === 'function' ? ctx.get('agentDefaultModel') : undefined
+      const selection = service?.currentSelection?.()
+      if (selection === null || selection === undefined) return undefined
+      return {
+        provider: String(selection.provider ?? ''),
+        model: String(selection.model ?? ''),
+        reasoningEffort: selection.reasoningEffort,
+      }
+    } catch {
+      return undefined
+    }
+  }
+
   /** JSON-safe view for the settings page. */
   function snapshot() {
     return {
@@ -643,6 +658,7 @@ export function createBench({ ctx, logger = console, config = {} }) {
       providers: targets.providers,
       providerErrors: targets.errors,
       quota: { kind: quota.kind, wallets: quota.wallets, text: quota.text, at: quota.at },
+      defaultSelection: readDefaultSelection(),
       weights,
       defaults,
     }

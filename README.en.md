@@ -8,18 +8,35 @@ Tests every LLM route this Harness has mounted, then ranks the models by
 ## Where it shows up
 
 - **Home page, under the composer** — one ambient row: the current best model and
-  its score, a **Test / 测试** button that starts a quick run, and an expandable
-  **top five** panel (rank · model · provider · score). `Alt+Shift+M` toggles
-  that panel from anywhere on the page, so a test never needs the settings page.
+  its score, a **Test / 测试** button that starts a quick run, and a **Use best /
+  一键使用** button that installs rank #1 as this session's model and the saved
+  default. The expandable **top five** panel (rank · model · provider · score)
+  gives every row its own *Use* action. `Alt+Shift+M` toggles the panel from
+  anywhere on the page.
 - **Settings → 模型优选 / Model Rank**: the full ranked table, with a run/stop
-  control, mode/limit/concurrency/provider filters, sortable headers and
-  per-model details.
+  control, mode/limit/concurrency/provider filters, sortable headers, and
+  per-model details including *Use this*.
 - **`model_rank` tool**: the same engine for the agent —
-  `action: "list" | "status" | "run" | "report"`.
-  `run` accepts `mode: "quick" | "deep"`, `limit`, `providers`, `concurrency`.
+  `action: "list" | "status" | "run" | "report" | "apply"`.
+  `run` accepts `mode: "quick" | "deep"`, `limit`, `providers`, `concurrency`;
+  `apply` accepts `provider`/`model`, defaulting to rank #1.
 
 Both UI surfaces read the same Host state, so the panel and the table never
 disagree.
+
+## What "use best" does
+
+1. Validates the route with `ctx.llm.resolveModelInfo`, so an unknown provider or
+   model never reaches the saved configuration.
+2. With a Session, calls `sessionController.selectModel` — the session switches
+   immediately and the default is saved in the background, exactly like the
+   composer's own model picker.
+3. Without a Session (the settings page), writes `agentDefaultModel.saveSelection`,
+   which affects new conversations.
+4. Keeps the previous reasoning effort when the target model lists the same
+   effort id, and otherwise uses the model's own default.
+
+It only changes the selection: weights and measured results are untouched.
 
 ## Install
 

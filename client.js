@@ -82,6 +82,13 @@ window.__ModuleLoader__.load({
         dockScore: 'Score',
         dockShowAll: 'Full table in Settings → Model Rank.',
         dockUnavailable: 'unavailable',
+        dockUse: 'Use best',
+        dockUsing: 'Switching…',
+        dockUseTitle: 'Make {model} the current session and default model',
+        dockApplied: 'Now using {model}',
+        dockCurrent: 'Default: {model}',
+        dockApplyFailed: 'Switch failed: {message}',
+        useThis: 'Use',
         taskOk: 'Instruction',
         taskMath: 'Arithmetic',
         taskJson: 'JSON output',
@@ -155,6 +162,13 @@ window.__ModuleLoader__.load({
         dockScore: '得分',
         dockShowAll: '完整表格在「设置 → 模型优选」。',
         dockUnavailable: '不可用',
+        dockUse: '一键使用',
+        dockUsing: '切换中…',
+        dockUseTitle: '把 {model} 设为当前会话与默认模型',
+        dockApplied: '已切换到 {model}',
+        dockCurrent: '默认：{model}',
+        dockApplyFailed: '切换失败：{message}',
+        useThis: '用这个',
         taskOk: '指令遵循',
         taskMath: '算术',
         taskJson: 'JSON 输出',
@@ -380,9 +394,15 @@ window.__ModuleLoader__.load({
 .mr-dock-top { color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }
 .mr-dock-progress { color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mr-dock-run, .mr-dock-close { height: 24px; padding: 0 10px; font-size: 11.5px; border-radius: 6px; }
+.mr-dock-use { height: 24px; padding: 0 12px; font-size: 11.5px; border-radius: 6px; }
+.mr-dock-pick { height: 20px; padding: 0 8px; border-radius: 5px; border: 1px solid var(--dsw-alias-border-l1); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 11px; cursor: pointer; }
+.mr-dock-pick:hover { color: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); }
+.mr-dock-pick:disabled { opacity: 0.4; cursor: default; }
+.mr-dock-default { max-width: 24ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-dock-applied { font-size: 11.5px; color: var(--dsw-alias-state-success-primary); }
 .mr-dock-panel { border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 .mr-dock-head { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: var(--dsw-alias-label-secondary); letter-spacing: 0.02em; }
-.mr-dock-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) 92px 40px; align-items: center; gap: 8px; }
+.mr-dock-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) 92px 38px 54px; align-items: center; gap: 8px; }
 .mr-dock-rank { font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-secondary); }
 .mr-dock-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mr-dock-prov { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary); font-size: 11px; }
@@ -408,6 +428,7 @@ window.__ModuleLoader__.load({
       const [provider, setProvider] = useState('')
       const [sort, setSort] = useState({ key: 'score', direction: 'desc' })
       const [open, setOpen] = useState(() => new Set())
+      const [appliedKey, setAppliedKey] = useState('')
       const inFlight = useRef(false)
 
       const load = useCallback(async () => {
@@ -509,6 +530,23 @@ window.__ModuleLoader__.load({
           if (current.key !== key) return { key, direction: key === 'ttftMs' ? 'asc' : 'desc' }
           return { key, direction: current.direction === 'desc' ? 'asc' : 'desc' }
         })
+      }, [])
+
+      // The settings page has no Session, so this writes the default selection:
+      // new conversations open on the chosen route.
+      const applyRow = useCallback(async row => {
+        if (row === undefined) return
+        try {
+          const result = await call('/apply', {
+            method: 'POST',
+            body: JSON.stringify({ provider: row.provider, model: row.model }),
+          })
+          if (result?.state !== undefined) setState(result.state)
+          setAppliedKey(row.key)
+          setError('')
+        } catch (cause) {
+          setError(String(cause?.message ?? cause))
+        }
       }, [])
 
       const modeName = modeLabel(locale, state?.mode ?? mode)
@@ -689,7 +727,17 @@ window.__ModuleLoader__.load({
                           detailItem(t('detailModalities'), (row.modalities ?? []).join(', ') || '—'),
                           detailItem(t('detailTokens'), formatTokens(row.outputTokens)),
                           detailItem(t('detailTotal'), formatMs(row.totalMs)),
-                          detailItem(t('detailSample'), h('span', { className: 'mr-mono' }, row.sample === '' ? '—' : row.sample))),
+                          detailItem(t('detailSample'), h('span', { className: 'mr-mono' }, row.sample === '' ? '—' : row.sample)),
+                          detailItem(t('useThis'), h('button', {
+                            type: 'button',
+                            className: 'mr-btn',
+                            disabled: row.status !== 'ok',
+                            title: t('dockUseTitle', { model: row.name ?? row.model }),
+                            onClick: event => {
+                              event.stopPropagation()
+                              void applyRow(row)
+                            },
+                          }, appliedKey === row.key ? t('dockApplied', { model: row.model }) : t('useThis')))),
                         (row.tasks ?? []).length > 0
                           ? h('div', { className: 'mr-tasks' },
                             row.tasks.map(task => h('span', {
@@ -714,6 +762,10 @@ window.__ModuleLoader__.load({
           h('span', {}, '·'),
           h('span', {}, t('tableNote')),
           h('span', {}, '·'),
+          h('span', {}, state?.defaultSelection === undefined
+            ? t('dockShowAll')
+            : t('dockCurrent', { model: `${state.defaultSelection.provider}/${state.defaultSelection.model}` })),
+          h('span', {}, '·'),
           h('span', {}, t('hint'))),
 
         (state?.providerErrors ?? []).length > 0
@@ -735,12 +787,14 @@ window.__ModuleLoader__.load({
      * model, runs a quick test on demand, and expands into the top five.
      * `Alt+Shift+M` toggles it, so the page needs no trip to Settings.
      */
-    function ModelRankDock() {
+    function ModelRankDock(props) {
       const locale = pickLocale()
       const t = useCallback((key, values) => translate(locale, key, values), [locale])
       const [open, setOpen] = useState(false)
       const [state, setState] = useState(undefined)
       const [busy, setBusy] = useState(false)
+      const [applying, setApplying] = useState(false)
+      const [applied, setApplied] = useState('')
       const [error, setError] = useState('')
       const inFlight = useRef(false)
 
@@ -795,11 +849,39 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
+      // One click installs a ranked model exactly like the composer's picker:
+      // the Session switches, and the default for new Sessions follows.
+      const use = useCallback(async row => {
+        if (row === undefined) return
+        setApplying(true)
+        setError('')
+        setApplied('')
+        try {
+          const result = await call('/apply', {
+            method: 'POST',
+            body: JSON.stringify({
+              provider: row.provider,
+              model: row.model,
+              ...(typeof props?.sessionId === 'string' && props.sessionId !== '' ? { sessionId: props.sessionId } : {}),
+            }),
+          })
+          if (result?.state !== undefined) setState(result.state)
+          const selected = result?.selected ?? { provider: row.provider, model: row.model }
+          setApplied(`${selected.provider}/${selected.model}`)
+        } catch (cause) {
+          setError(t('dockApplyFailed', { message: String(cause?.message ?? cause) }))
+        } finally {
+          setApplying(false)
+        }
+      }, [props?.sessionId, t])
+
       const running = state?.running === true
       const progress = state?.progress ?? { done: 0, total: 0 }
       const rows = Array.isArray(state?.rows) ? state.rows.slice(0, 5) : []
       const best = rows[0]
       const tone = best === undefined ? 'idle' : scoreTone(best.score ?? 0, best)
+      const currentDefault = state?.defaultSelection
+      const canUse = best !== undefined && best.status === 'ok' && !running
 
       return h('div', { className: 'mr-dock' },
         h('style', { key: 'styles' }, CSS),
@@ -823,9 +905,16 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button',
             className: 'mr-btn mr-dock-run',
-            disabled: running || busy,
+            disabled: running || busy || applying,
             onClick: () => void run(),
           }, running ? '…' : t('dockTest')),
+          h('button', {
+            type: 'button',
+            className: 'mr-btn mr-btn-primary mr-dock-use',
+            disabled: !canUse || applying,
+            title: best === undefined ? t('dockEmpty') : t('dockUseTitle', { model: best.name ?? best.model }),
+            onClick: () => void use(best),
+          }, applying ? t('dockUsing') : t('dockUse')),
           open
             ? h('button', { type: 'button', className: 'mr-btn mr-dock-close', onClick: () => setOpen(false) }, t('dockCollapse'))
             : null),
@@ -834,14 +923,30 @@ window.__ModuleLoader__.load({
           ? h('div', { className: 'mr-dock-panel' },
             h('div', { className: 'mr-dock-head' },
               h('span', {}, t('dockTop')),
-              h('span', {}, t('dockShowAll'))),
+              h('span', { className: 'mr-dock-default' },
+                currentDefault === undefined
+                  ? t('dockShowAll')
+                  : t('dockCurrent', { model: `${currentDefault.provider}/${currentDefault.model}` }))),
             rows.length === 0
               ? h('div', { className: 'mr-note' }, error === '' ? t('dockEmpty') : error)
               : rows.map(row => h('div', { key: row.key, className: 'mr-dock-row' },
                 h('span', { className: 'mr-dock-rank' }, `#${row.rank}`),
                 h('span', { className: 'mr-dock-name', title: row.model }, row.name ?? row.model),
                 h('span', { className: 'mr-dock-prov', title: row.provider }, row.providerName ?? row.provider),
-                h('span', { className: `mr-dock-score mr-scoretext-${scoreTone(row.score ?? 0, row)}` }, String(row.score ?? 0)))),
+                h('span', { className: `mr-dock-score mr-scoretext-${scoreTone(row.score ?? 0, row)}` }, String(row.score ?? 0)),
+                h('button', {
+                  type: 'button',
+                  className: 'mr-dock-pick',
+                  disabled: applying || row.status !== 'ok',
+                  title: t('useThis'),
+                  onClick: event => {
+                    event.stopPropagation()
+                    void use(row)
+                  },
+                }, t('useThis')))),
+            applied !== ''
+              ? h('div', { className: 'mr-dock-applied' }, t('dockApplied', { model: applied }))
+              : null,
             rows.length > 0 && error !== '' ? h('div', { className: 'mr-error' }, error) : null,
             h('div', { className: 'mr-dock-hint mr-muted' }, t('dockHint')))
           : null)
