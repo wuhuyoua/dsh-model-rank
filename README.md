@@ -1,15 +1,22 @@
-# Model Rank (dsh-model-rank)
+# Model Rank（dsh-model-rank）
 
-Tests every LLM route this Harness has mounted, then ranks the models by
-**availability, remaining quota, capability and speed** — measured, not guessed.
+实测 DeepSeek Harness 里每一条已挂载的模型路由，按**可用性、剩余额度、能力、速度**加权排名——全部真跑，不是估算。
 
-## Install
+简体中文 | [English](README.en.md)
 
-`dsh-model-rank` is a DSH profile bundle: a Host half (probes, HTTP API, tool)
-plus a web Client half (settings page and the composer panel). No build step and
-no runtime dependencies.
+## 它在哪些地方出现
 
-1. Add the dependency to the profile's `package.json`:
+- **首页输入框下方**：一行常驻入口，显示当前第一名的模型与分数；旁边的「测试」按钮一键开测，点开是**前五名**面板（排名 · 模型 · 通道 · 得分）。`Alt+Shift+M` 可在页面任意位置展开/收起，不需要进设置。
+- **设置 → 模型优选**：完整表格，可点表头排序；支持快速/深度模式、模型上限、并发、提供方筛选、开始/停止，以及逐模型明细（错误、回答样本、四项能力任务）。
+- **`model_rank` 工具**：给 agent 用，`action` 取 `list` / `status` / `run` / `report`；`run` 支持 `mode: "quick" | "deep"`、`limit`、`providers`、`concurrency`。
+
+两个界面读同一份 Host 状态，所以首页面板和设置页表格永远一致。
+
+## 安装
+
+`dsh-model-rank` 是一个 DSH profile bundle：Host 半身（探测、HTTP 接口、工具）+ Web Client 半身（设置页与首页面板）。无构建步骤、无运行时依赖。
+
+1. 在 profile 的 `package.json` 里加依赖：
 
    ```json
    "dependencies": {
@@ -17,7 +24,7 @@ no runtime dependencies.
    }
    ```
 
-2. Add the bundle to the composed profile:
+2. 把 bundle 加进组合：
 
    ```json
    "dsh": {
@@ -27,66 +34,33 @@ no runtime dependencies.
    }
    ```
 
-3. Install it in that profile (through the Plugin Manager, or
-   `dsh plugin --profile <profile> install`), then refresh the page once.
+3. 在该 profile 里安装（插件管理器，或 `dsh plugin --profile <profile> install`），然后刷新页面一次。
 
-To remove it, drop the bundle entry and the dependency, then install again.
+卸载就是反过来：去掉 bundle 条目和依赖，再装一次。
 
-## Development
+## 一次测试都测了什么
 
-```bash
-npm test          # offline self-test: stub llm service, no network, no quota
-```
+1. **枚举**——`ctx.llm.listProviders()`，再对每个 provider 调 `ctx.llm.listModels()`。枚举失败的 provider 会单独报告，不会被静默跳过。
+2. **探测**——每个模型发一次真实请求（`ctx.llm.prepareCall()` + `prepared.stream()`），记录：
+   - 首字时间、总耗时；
+   - 流式输出速率（token/秒）；
+   - 结束原因，以及提供方返回的失败码/状态码。
+3. **能力**——用答案可机器判定的任务：
+   - `quick`：指令遵循（"只回复 OK"）。
+   - `deep`：再加算术（`17 × 23`）、精确 JSON 输出、中文指令各一项；逐条判定，不交给模型自评。
 
-The test drives the real engine against a stub that follows the `llm` contract,
-including the "a prepared call can only be dispatched once" rule, so a dispatch
-bug fails before it reaches a provider.
+深度模式还会调 `ctx.llm.resolveModelInfo()` 取上下文窗口与推理支持，用于能力分。
 
-## Where it shows up
+## 评分
 
-- **Home page, under the composer** — one ambient row: the current best model and
-  its score, a **Test / 测试** button that starts a quick run, and an expandable
-  **top five** panel (rank · model · provider · score). `Alt+Shift+M` toggles
-  that panel from anywhere on the page, so a test never needs the settings page.
-- **Settings → 模型优选 / Model Rank**: the full ranked table, with a run/stop
-  control, mode/limit/concurrency/provider filters, sortable headers and
-  per-model details.
-- **`model_rank` tool**: the same engine for the agent —
-  `action: "list" | "status" | "run" | "report"`.
-  `run` accepts `mode: "quick" | "deep"`, `limit`, `providers`, `concurrency`.
+| 维度 | 权重 | 计算方式 |
+| --- | --- | --- |
+| 可用性 | 40% | 请求正常结束且有回答文本 = 100，否则 0 |
+| 速度 | 25% | 55% 首字分（400 ms 满分，2.9 s 归零）+ 45% 吞吐分（3 tok/s 归零，50 tok/s 满分） |
+| 能力 | 25% | 72% 任务正确率 + 18% 上下文窗口 + 10% 推理支持 |
+| 额度 | 10% | 免费通道 100；钱包余额分档（≥100 → 100 … 0 → 0）；未知取中性 55 |
 
-Both UI surfaces read the same Host state, so the panel and the table never
-disagree.
-
-## What a run measures
-
-1. **Inventory** — `ctx.llm.listProviders()` then `ctx.llm.listModels(provider)`.
-   A provider that cannot enumerate is reported as a failed provider, never
-   skipped silently.
-2. **Probe** — one real completion request per model through
-   `ctx.llm.prepareCall()` + `prepared.stream()`, recording:
-   - time to first token and total time,
-   - streamed output tokens/second,
-   - the finish reason and any provider failure code/status.
-3. **Capability** — deterministic tasks with machine-checkable answers:
-   - `quick` mode: instruction following ("reply with exactly OK").
-   - `deep` mode: + arithmetic (`17 × 23`), exact JSON output, and a Chinese
-     instruction. Each answer is checked, never judged by a model.
-
-Deep mode also calls `ctx.llm.resolveModelInfo()` for the context window and
-reasoning support used by the capability blend.
-
-## Scoring
-
-| Dimension    | Weight | How it is computed |
-| ------------ | ------ | ------------------ |
-| Availability | 40%    | 100 when a request finished normally with assistant text, else 0 |
-| Speed        | 25%    | 55% first-token score (400 ms great, 2.9 s zero) + 45% throughput (3 tok/s zero, 50 tok/s full) |
-| Capability   | 25%    | 72% task accuracy + 18% context window + 10% reasoning support |
-| Quota        | 10%    | 100 free lane · wallet balance bands (≥100 → 100 … 0 → 0) · unknown → neutral 55 |
-
-An unavailable route scores 0 regardless of the other dimensions. Weights are
-normalized and can be overridden in `cordis.patch.yml`:
+不可用的路由无论其他维度多高，综合分都是 0。权重会归一化，可在 `cordis.patch.yml` 覆盖：
 
 ```yaml
 - id: model-rank
@@ -97,45 +71,40 @@ normalized and can be overridden in `cordis.patch.yml`:
     limit: 0
 ```
 
-## Quota honesty
+## 额度的口径
 
-Only two quota shapes are real:
+只有两种额度是真数据：
 
-- **DeepSeek account** (`deepseek*` providers) — `ctx.deepseekAccount.getBalance()`
-  returns the recharge and bonus wallets; the table shows the amount.
-- **Free lanes** — a route whose id says `free`/`aggregate` is scored as
-  unmetered and labelled 免费通道 / free lane.
+- **DeepSeek 账户**（`deepseek*` 路由）——`ctx.deepseekAccount.getBalance()` 返回充值钱包与赠送钱包，表格直接显示金额。
+- **免费通道**——路由 id 里带 `free` / `aggregate` 的，按"不计费"记满分，标注「免费通道」。
 
-Anything else reports 未报告 / not reported and scores the neutral 55. A wallet
-balance of zero shows up as a failed probe anyway, so the ranking does not
-pretend an empty account is healthy.
+其余一律显示「未报告」，取中性 55 分。余额为 0 的账户本身探测就会失败，所以排名不会把空账户当成健康。
 
-## Cost
+## 成本
 
-Quick mode is one tiny request per model (capped at 96 output tokens). Deep mode
-is four requests. Nothing is sent until you press the button or call the tool,
-and the plugin never runs on a timer.
+快速模式每个模型一次极小请求（输出上限 96 token）；深度模式四次。不点按钮、不调工具就不会发任何请求，插件也不跑定时任务。
 
-## Files
+## 开发
 
-- `index.js` — Host half: tool registration and `/api/model-rank/*`.
-- `src/bench.js` — inventory, probing, progress, persistence (`~/.dsh/model-rank/report.json`).
-- `src/scoring.js` — pure scoring, weights and ranking.
-- `src/fence.js` — same-origin admission for the plugin's HTTP routes.
-- `client.js` — the settings page and the composer panel (React, theme tokens only).
+```bash
+npm test          # 离线自测：桩实现的 llm 服务，不联网、不耗额度
+```
 
-## Limits
+自测用符合 `llm` 契约的桩驱动真实引擎，其中包括"一次 prepared call 只能派发一次"的约束——派发逻辑有 bug 会在碰到真实 provider 之前就失败。
 
-- Streaming usage is reported by the adapter; when a provider omits it, output
-  tokens are estimated from text length, so speed is approximate for those rows.
-- Some aggregating providers deliver a whole answer in one burst; the measured
-  rate then describes that burst, not a steady token cadence, and reads very high.
-- Capability is a smoke test (four short tasks), not a benchmark suite: it
-  separates working routes from broken ones and catches gross instruction
-  failures, not fine-grained quality differences.
-- A model that answers the availability prompt wrongly is still "available" —
-  the status column reports reachability, the capability column reports quality.
-- A prepared call is single-use, so deep mode prepares once per task (four
-  preparations and four requests per model). Quick mode is one of each.
-- Quota is only real where a wallet or a free lane exists; every other route
-  reports 未报告 and scores the neutral 55.
+## 文件结构
+
+- `index.js` —— Host 半身：工具注册与 `/api/model-rank/*`。
+- `src/bench.js` —— 枚举、探测、进度、持久化（`~/.dsh/model-rank/report.json`）。
+- `src/scoring.js` —— 纯打分函数、权重与排序。
+- `src/fence.js` —— 插件 HTTP 路由的同源准入校验。
+- `client.js` —— 设置页与首页面板（React，只用主题 token）。
+
+## 限制
+
+- 流式用量由适配器上报；提供方不报时按文本长度估算，这类行的速度只是近似值。
+- 部分聚合通道会把整段回答一次性推回，测到的是"爆发速率"而非稳定码率，数值会偏高。
+- 能力只是冒烟测试（四道小题），不是评测套件：能区分"能用/不能用"和明显的指令失败，区分不了细粒度的质量差异。
+- 回答错了但请求正常的模型仍算"可用"——状态列看可达性，能力列看质量。
+- prepared call 是一次性的，所以深度模式每个任务各准备一次（每模型 4 次准备 + 4 次请求）；快速模式各 1 次。
+- 额度只在有钱包或免费通道时才是真数据，其余一律「未报告」。
