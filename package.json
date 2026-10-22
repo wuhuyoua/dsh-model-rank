@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-rank",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "type": "module",
   "description": "Benchmark every LLM route mounted in DeepSeek Harness and rank the models by availability, stability, remaining quota, capability and speed — with a favorites dropdown under the composer and a model_rank tool for the agent.",
   "keywords": [
@@ -22,7 +22,9 @@
     "url": "https://github.com/wuhuyoua/dsh-model-rank/issues"
   },
   "scripts": {
-    "test": "node scripts/selftest.mjs"
+    "test": "node scripts/selftest.mjs && node scripts/render-smoke.mjs",
+    "test:engine": "node scripts/selftest.mjs",
+    "test:render": "node scripts/render-smoke.mjs"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -317,6 +317,42 @@ window.__ModuleLoader__.load({
       return key === undefined ? id : translate(locale, key)
     }
 
+    const SORTABLE = {
+      model: 'text',
+      providerName: 'text',
+      score: 'number',
+      ttftMs: 'number',
+      tokensPerSecond: 'number',
+      capabilityScore: 'number',
+      stabilityScore: 'number',
+      availability: 'text',
+    }
+
+    function sortRows(rows, key, direction) {
+      const kind = SORTABLE[key] ?? 'text'
+      const sign = direction === 'asc' ? 1 : -1
+      const copy = [...rows]
+      copy.sort((a, b) => {
+        if (key === 'availability') {
+          const left = a.status === 'ok' ? 1 : 0
+          const right = b.status === 'ok' ? 1 : 0
+          if (left !== right) return (right - left) * sign
+          return (a.score ?? 0) - (b.score ?? 0) >= 0 ? -1 : 1
+        }
+        const left = a[key]
+        const right = b[key]
+        if (kind === 'number') {
+          const l = Number.isFinite(left) ? left : -1
+          const r = Number.isFinite(right) ? right : -1
+          return (l - r) * sign
+        }
+        const l = String(left ?? '')
+        const r = String(right ?? '')
+        return l.localeCompare(r) * sign
+      })
+      return copy
+    }
+
     // ── styles ──────────────────────────────────────────────────────────────
     const CSS = `
 .mr-root { display: flex; flex-direction: column; gap: 18px; padding: 4px 0 32px; color: var(--dsw-alias-label-primary); }
@@ -452,16 +488,16 @@ window.__ModuleLoader__.load({
         try { return new Set(JSON.parse(localStorage.getItem('model-rank-favorites') || '[]')) } catch { return new Set() }
       })
       const [showFavoritesOnly, setShowFavoritesOnly] = useState(false)
-      const [rankBy, setRankBy] = useState('score')
       const inFlight = useRef(false)
 
+      // One source of truth for ordering: the toolbar dropdown and the table
+      // headers both drive `sort`, so clicking a header cannot disagree with it.
       const RANK_OPTIONS = [
         { key: 'score', label: t('rankByScore') },
         { key: 'capabilityScore', label: t('rankByCapability') },
         { key: 'ttftMs', label: t('rankByTtft') },
         { key: 'tokensPerSecond', label: t('rankByThroughput') },
         { key: 'stabilityScore', label: t('rankByStability') },
-        { key: 'quota', label: t('rankByQuota') },
       ]
 
       const persistFavorites = useCallback(() => {
@@ -548,15 +584,16 @@ window.__ModuleLoader__.load({
         if (showFavoritesOnly) {
           filtered = filtered.filter(row => favorites.has(row.key))
         }
-        // First separate available from unavailable
+        // Availability is the hard gate: an unavailable route never outranks a
+        // working one, whatever dimension the user picked. Inside each group the
+        // selected dimension decides the order.
         const available = filtered.filter(row => row.status === 'ok')
         const unavailable = filtered.filter(row => row.status !== 'ok')
-        // Sort available by the selected rank key
-        const sortedAvailable = sortRows(available, rankBy, rankBy === 'ttftMs' ? 'asc' : 'desc')
-        // Unavailable always at the end, sorted by score desc
-        const sortedUnavailable = unavailable.sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-        return [...sortedAvailable, ...sortedUnavailable]
-      }, [provider, rankBy, showFavoritesOnly, state?.rows, favorites])
+        return [
+          ...sortRows(available, sort.key, sort.direction),
+          ...sortRows(unavailable, sort.key, sort.direction),
+        ]
+      }, [provider, sort, showFavoritesOnly, state?.rows, favorites])
 
       const providers = useMemo(() => {
         const list = Array.isArray(state?.providers) ? state.providers : []
@@ -695,9 +732,13 @@ window.__ModuleLoader__.load({
             h('span', { className: 'mr-field-label' }, t('rankBy')),
             h('select', {
               className: 'mr-select',
-              value: rankBy,
+              value: sort.key,
               disabled: running,
-              onChange: event => setRankBy(event.target.value),
+              // Latency is the one dimension where smaller is better.
+              onChange: event => {
+                const key = event.target.value
+                setSort({ key, direction: key === 'ttftMs' ? 'asc' : 'desc' })
+              },
             },
               RANK_OPTIONS.map(opt => h('option', { key: opt.key, value: opt.key }, opt.label)))),
           h('div', { className: 'mr-spacer' }),

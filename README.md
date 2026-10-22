@@ -104,10 +104,14 @@
 ## 开发
 
 ```bash
-npm test          # 离线自测：桩实现的 llm 服务，不联网、不耗额度
+npm test           # 引擎自测 + 渲染冒烟测试，都不联网、不耗额度
+npm run test:engine  # 桩实现的 llm 服务：枚举、探测、打分、排序
+npm run test:render  # 假 React 环境真实渲染设置页与首页面板
 ```
 
-自测用符合 `llm` 契约的桩驱动真实引擎，其中包括"一次 prepared call 只能派发一次"的约束——派发逻辑有 bug 会在碰到真实 provider 之前就失败。
+引擎自测用符合 `llm` 契约的桩驱动真实引擎，其中包括"一次 prepared call 只能派发一次"的约束——派发逻辑有 bug 会在碰到真实 provider 之前就失败。
+
+渲染冒烟测试值得单独说明：`node --check` 只证明文件能解析，而真正让设置页白屏的错（例如 `SORTABLE is not defined`）发生在 **render 阶段的 `useMemo` 里**，语法检查抓不到，只能重启浏览器后才在控制台看到。这个测试用最小 React 垫片加载 `client.js`、喂一份假的 `/state`、跑 mount effect 并重新渲染，所以丢失的标识符、钩子顺序错误、memo 依赖不全都本地就会失败。
 
 ## 文件结构
 
@@ -116,6 +120,8 @@ npm test          # 离线自测：桩实现的 llm 服务，不联网、不耗�
 - `src/scoring.js` —— 纯打分函数、权重与排序。
 - `src/fence.js` —— 插件 HTTP 路由的同源准入校验。
 - `client.js` —— 设置页与首页面板（React，只用主题 token）。
+- `scripts/selftest.mjs` —— 引擎自测（桩 `llm`）。
+- `scripts/render-smoke.mjs` —— 渲染冒烟测试（垫片 React）。
 
 ## 限制
 
