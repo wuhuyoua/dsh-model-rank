@@ -66,5 +66,12 @@
   "colStability": "Stable",
   "stabilityTitle": "How many probes actually came back (repeats + multi-turn + long payload)",
   "detailStability": "Answered probes",
-  "detailDropped": "dropped some calls"
+  "detailDropped": "dropped some calls",
+  "rankBy": "Rank by",
+  "rankByScore": "Composite score",
+  "rankByCapability": "Capability",
+  "rankByTtft": "First token (TTFT)",
+  "rankByThroughput": "Throughput",
+  "rankByStability": "Stability",
+  "rankByQuota": "Quota"
 }

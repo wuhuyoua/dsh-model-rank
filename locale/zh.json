@@ -66,5 +66,12 @@
   "colStability": "稳定",
   "stabilityTitle": "实际有回复的探测次数（重复调用 + 多轮对话 + 长输入）",
   "detailStability": "有效探测",
-  "detailDropped": "有调用掉线"
+  "detailDropped": "有调用掉线",
+  "rankBy": "按...排序",
+  "rankByScore": "综合分",
+  "rankByCapability": "能力",
+  "rankByTtft": "首字 (TTFT)",
+  "rankByThroughput": "吞吐",
+  "rankByStability": "稳定性",
+  "rankByQuota": "额度"
 }

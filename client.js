@@ -99,6 +99,13 @@ window.__ModuleLoader__.load({
         noFavorites: 'No favorites yet. Click the star on a row to pin it.',
         recentLabel: 'Recent',
         recentEmpty: 'No recent models.',
+        rankBy: 'Rank by',
+        rankByScore: 'Composite score',
+        rankByCapability: 'Capability',
+        rankByTtft: 'First token (TTFT)',
+        rankByThroughput: 'Throughput',
+        rankByStability: 'Stability',
+        rankByQuota: 'Quota',
         taskOk: 'Instruction',
         taskStab: 'Stability',
         taskMulti: 'Multi-turn',
@@ -193,6 +200,13 @@ window.__ModuleLoader__.load({
         noFavorites: '还没有收藏。点击行上的星标固定常用模型。',
         recentLabel: '常用',
         recentEmpty: '暂无常用模型。',
+        rankBy: '按...排序',
+        rankByScore: '综合分',
+        rankByCapability: '能力',
+        rankByTtft: '首字 (TTFT)',
+        rankByThroughput: '吞吐',
+        rankByStability: '稳定性',
+        rankByQuota: '额度',
         taskOk: '指令遵循',
         taskStab: '稳定性',
         taskMulti: '多轮对话',
@@ -301,43 +315,6 @@ window.__ModuleLoader__.load({
     function taskLabel(locale, id) {
       const key = { ok: 'taskOk', stab: 'taskStab', math: 'taskMath', json: 'taskJson', zh: 'taskZh', reason: 'taskReason', multi: 'taskMulti', long: 'taskLong' }[id]
       return key === undefined ? id : translate(locale, key)
-    }
-
-    // ── sorting ─────────────────────────────────────────────────────────────
-    const SORTABLE = {
-      model: 'text',
-      providerName: 'text',
-      score: 'number',
-      ttftMs: 'number',
-      tokensPerSecond: 'number',
-      capabilityScore: 'number',
-      stabilityScore: 'number',
-      availability: 'text',
-    }
-
-    function sortRows(rows, key, direction) {
-      const kind = SORTABLE[key] ?? 'text'
-      const sign = direction === 'asc' ? 1 : -1
-      const copy = [...rows]
-      copy.sort((a, b) => {
-        if (key === 'availability') {
-          const left = a.status === 'ok' ? 1 : 0
-          const right = b.status === 'ok' ? 1 : 0
-          if (left !== right) return (right - left) * sign
-          return (a.score ?? 0) - (b.score ?? 0) >= 0 ? -1 : 1
-        }
-        const left = a[key]
-        const right = b[key]
-        if (kind === 'number') {
-          const l = Number.isFinite(left) ? left : -1
-          const r = Number.isFinite(right) ? right : -1
-          return (l - r) * sign
-        }
-        const l = String(left ?? '')
-        const r = String(right ?? '')
-        return l.localeCompare(r) * sign
-      })
-      return copy
     }
 
     // ── styles ──────────────────────────────────────────────────────────────
@@ -475,7 +452,17 @@ window.__ModuleLoader__.load({
         try { return new Set(JSON.parse(localStorage.getItem('model-rank-favorites') || '[]')) } catch { return new Set() }
       })
       const [showFavoritesOnly, setShowFavoritesOnly] = useState(false)
+      const [rankBy, setRankBy] = useState('score')
       const inFlight = useRef(false)
+
+      const RANK_OPTIONS = [
+        { key: 'score', label: t('rankByScore') },
+        { key: 'capabilityScore', label: t('rankByCapability') },
+        { key: 'ttftMs', label: t('rankByTtft') },
+        { key: 'tokensPerSecond', label: t('rankByThroughput') },
+        { key: 'stabilityScore', label: t('rankByStability') },
+        { key: 'quota', label: t('rankByQuota') },
+      ]
 
       const persistFavorites = useCallback(() => {
         try { localStorage.setItem('model-rank-favorites', JSON.stringify([...favorites])) } catch {}
@@ -561,8 +548,15 @@ window.__ModuleLoader__.load({
         if (showFavoritesOnly) {
           filtered = filtered.filter(row => favorites.has(row.key))
         }
-        return sortRows(filtered, sort.key, sort.direction)
-      }, [provider, sort, showFavoritesOnly, state?.rows, favorites])
+        // First separate available from unavailable
+        const available = filtered.filter(row => row.status === 'ok')
+        const unavailable = filtered.filter(row => row.status !== 'ok')
+        // Sort available by the selected rank key
+        const sortedAvailable = sortRows(available, rankBy, rankBy === 'ttftMs' ? 'asc' : 'desc')
+        // Unavailable always at the end, sorted by score desc
+        const sortedUnavailable = unavailable.sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+        return [...sortedAvailable, ...sortedUnavailable]
+      }, [provider, rankBy, showFavoritesOnly, state?.rows, favorites])
 
       const providers = useMemo(() => {
         const list = Array.isArray(state?.providers) ? state.providers : []
@@ -697,6 +691,15 @@ window.__ModuleLoader__.load({
               disabled: running,
               onChange: event => setShowFavoritesOnly(event.target.checked),
             })),
+          h('label', { className: 'mr-field' },
+            h('span', { className: 'mr-field-label' }, t('rankBy')),
+            h('select', {
+              className: 'mr-select',
+              value: rankBy,
+              disabled: running,
+              onChange: event => setRankBy(event.target.value),
+            },
+              RANK_OPTIONS.map(opt => h('option', { key: opt.key, value: opt.key }, opt.label)))),
           h('div', { className: 'mr-spacer' }),
           h('button', {
             type: 'button',
