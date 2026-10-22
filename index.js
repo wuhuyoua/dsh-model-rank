@@ -222,10 +222,10 @@ function toolDefinition(bench, applySelection) {
       'Test every LLM route currently mounted in this Harness and rank them, or switch this conversation to the best one.',
       '`action: list` reports the provider routes and the models they advertise (no requests are sent).',
       '`action: status` returns the last run, including progress while a run is going.',
-      '`action: run` sends real, tiny requests: quick mode = 1 request per model (availability, first-token latency, streamed speed, one instruction check); deep mode = 4 deterministic tasks (instruction, arithmetic, JSON, Chinese) for a finer capability score.',
+      '`action: run` sends real, tiny requests: quick mode = 3 requests per model (one instruction check plus two repeats, so an intermittent route is caught); deep mode = 8 probes per model (instruction, repeats, arithmetic, JSON, Chinese, reasoning, a multi-turn follow-up and a long payload) for a finer capability and reliability score.',
       '`action: report` returns the last ranked table without measuring again.',
       '`action: apply` switches the current Session to the top-ranked model (or the `provider`/`model` given), which also saves it as the default for new Sessions. It needs an existing result: run first.',
-      'Ranking blends availability 40%, speed 25%, capability 25% and provider-reported quota 10%. Quota is only known for routes that publish a wallet (DeepSeek account) or an unmetered free lane; other routes score neutral and show "未报告".',
+      'Ranking blends availability 30%, stability 20%, first-token latency 15%, throughput 8%, capability 20% and provider-reported quota 7%. Stability is the share of probes that actually came back, so a route that answers once and then drops calls is demoted instead of topping the list. Quota is only known for routes that publish a wallet (DeepSeek account) or an unmetered free lane; other routes score neutral and show "未报告".',
       'Use `limit` to bound cost, and `mode: "quick"` unless the user asks for a thorough comparison.',
     ].join(' '),
     parameters: {
@@ -240,7 +240,7 @@ function toolDefinition(bench, applySelection) {
         mode: {
           type: 'string',
           enum: ['quick', 'deep'],
-          description: 'quick (default) = 1 request per model; deep = 4 capability tasks per model. Deep costs roughly 4x the quota.',
+          description: 'quick (default) = 3 requests per model (instruction + repeats); deep = 8 probes per model, including multi-turn and long payload. Deep costs roughly 3x the quota.',
         },
         limit: {
           type: 'integer',

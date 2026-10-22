@@ -1,11 +1,12 @@
 /**
  * Pure scoring for `dsh-model-rank`.
  *
- * Five independent 0..100 sub-scores are folded into one composite. Every
+ * Six independent 0..100 sub-scores are folded into one composite. Every
  * function here is deterministic and side-effect free so the formula can be
  * checked (and changed) without touching the probing code:
  *
  * - availability: did a real request finish normally with assistant text?
+ * - stability:    share of repeated / multi-turn / long probes that answered.
  * - ttft:         time to first token (lower is better).
  * - throughput:   streaming output tokens/second with burst penalty.
  * - capability:   weighted deterministic task accuracy + metadata.
@@ -15,13 +16,14 @@
  * @module src/scoring.js
  */
 
-/** Default blend of the five dimensions. Config in cordis.patch.yml may override. */
+/** Default blend of the six dimensions. Config in cordis.patch.yml may override. */
 export const DEFAULT_WEIGHTS = {
-  availability: 0.45,
-  ttft: 0.20,
-  throughput: 0.10,
-  capability: 0.15,
-  quota: 0.10,
+  availability: 0.30,
+  stability: 0.20,
+  ttft: 0.15,
+  throughput: 0.08,
+  capability: 0.20,
+  quota: 0.07,
 }
 
 /** Coerce a weight map into non-negative numbers that sum to 1. */
@@ -74,6 +76,29 @@ export function throughputScore(tokensPerSecond, chunkCount = 0) {
 /** Availability is 100 for a successful response with assistant text, else 0. */
 export function availabilityScore(row) {
   return row.status === 'ok' ? 100 : 0
+}
+
+/**
+ * Stability is the share of probes that actually came back with assistant text.
+ *
+ * A single successful reply proves nothing: real conversations fail on the
+ * second turn, on a larger payload, or intermittently under load. The engine
+ * runs several attempts per model (repeats, a multi-turn exchange and a long
+ * payload in deep mode) and this is `answered / attempted`. A route that drops
+ * one of three calls scores 67 instead of a perfect 100, which is what pushes
+ * it down the ranking.
+ *
+ * Rows measured by an older engine carry no counts and fall back to the binary
+ * availability value, so a stale report still renders sensibly.
+ */
+export function stabilityScore(row) {
+  if (row.status !== 'ok') return 0
+  const attempts = Number(row.attempts)
+  const answered = Number(row.answeredCount)
+  if (Number.isFinite(attempts) && attempts > 0 && Number.isFinite(answered)) {
+    return clampScore((Math.min(answered, attempts) / attempts) * 100)
+  }
+  return 100
 }
 
 /**
@@ -132,12 +157,14 @@ export function quotaScoreOf({ kind, balance }) {
 export function compositeScore(row, weights) {
   if (row.status !== 'ok') return 0
   const availability = availabilityScore(row)
+  const stability = stabilityScore(row)
   const ttft = ttftScore(row.ttftMs)
   const throughput = throughputScore(row.tokensPerSecond, row.chunkCount)
   const capability = capabilityScore(row)
   const quota = row.quotaScore ?? row.quota?.score ?? 55
   return clampScore(
     availability * weights.availability
+      + stability * weights.stability
       + ttft * weights.ttft
       + throughput * weights.throughput
       + capability * weights.capability

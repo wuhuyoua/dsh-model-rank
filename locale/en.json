@@ -1,16 +1,16 @@
 {
   "meta": {
     "title": "Model Rank",
-    "description": "Benchmarks every LLM route mounted in this Harness and ranks them by availability, time-to-first-token, throughput, capability and quota."
+    "description": "Benchmarks every LLM route mounted in this Harness and ranks them by availability, stability, time-to-first-token, throughput, capability and quota."
   },
   "nav": "Model Rank",
   "title": "Model Rank",
-  "subtitle": "Benchmark every mounted provider and model, then rank them by availability, time-to-first-token, throughput, capability and quota.",
+  "subtitle": "Benchmark every mounted provider and model, then rank them by availability, stability, time-to-first-token, throughput, capability and quota.",
   "run": "Run test",
   "stop": "Stop",
   "mode": "Mode",
-  "modeQuick": "Quick (1 request per model)",
-  "modeDeep": "Deep (4 capability tasks per model)",
+  "modeQuick": "Quick (3 requests per model)",
+  "modeDeep": "Deep (8 probes per model)",
   "concurrency": "Concurrency",
   "limit": "Model limit",
   "limitAll": "All",
@@ -45,8 +45,8 @@
   "detailReasoning": "Reasoning",
   "detailTokens": "Output tokens",
   "detailTotal": "Total",
-  "weights": "Weights: availability {a}% · TTFT {t}% · Throughput {p}% · Capability {c}% · Quota {q}%",
-  "hint": "Quick mode sends one tiny request per model; deep mode adds four deterministic tasks and costs more quota.",
+  "weights": "Weights: availability {a}% · stability {s}% · TTFT {t}% · throughput {p}% · capability {c}% · quota {q}%",
+  "hint": "Quick mode sends three tiny requests per model (repeat calls catch intermittent failures); deep mode adds arithmetic, JSON, Chinese, reasoning, multi-turn and long-payload probes, and costs more quota.",
   "refresh": "Refresh",
   "expand": "Expand",
   "collapse": "Collapse",
@@ -54,9 +54,17 @@
     "ok": "Instruction",
     "math": "Arithmetic",
     "json": "JSON output",
-    "zh": "Chinese instruction"
+    "zh": "Chinese instruction",
+    "reason": "Reasoning",
+    "multi": "Multi-turn",
+    "long": "Long payload",
+    "stab": "Stability"
   },
   "recommend": "Recommended",
   "noCandidates": "No mounted model route was found.",
-  "tableNote": "Sorted by composite score; click a header to change the sort."
+  "tableNote": "Sorted by composite score; click a header to change the sort.",
+  "colStability": "Stable",
+  "stabilityTitle": "How many probes actually came back (repeats + multi-turn + long payload)",
+  "detailStability": "Answered probes",
+  "detailDropped": "dropped some calls"
 }

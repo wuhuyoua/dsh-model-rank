@@ -26,6 +26,7 @@ import {
   capabilityScore,
   normalizeWeights,
   quotaScoreOf,
+  stabilityScore,
   ttftScore,
   throughputScore,
   availabilityScore,
@@ -44,29 +45,54 @@ const MAX_OUTPUT_TOKENS = 96
 const TARGETS_TTL_MS = 5 * 60_000
 
 /**
- * The deterministic capability tasks.
+ * The deterministic probes.
  *
- * `quick` tasks run in both modes; the others only in deep mode.
- * Each task has a weight for the capability score (sum = 1.0 in deep mode).
- * quick mode runs only the first task (OK).
+ * `quick` probes run in both modes; the others only in deep mode.
+ * Each capability probe has a weight for the capability score.
+ *
+ * `stab` is a reliability probe: it repeats the trivial prompt and only counts
+ * whether replies came back. Real conversations break on the second call, so a
+ * single success must not read as a perfect availability score.
+ * `multi` replays a short exchange (history + follow-up question) because every
+ * real DSH conversation carries history.
+ * `long` sends a large payload with a short question: routes that only survive
+ * tiny prompts are exactly the ones that "cannot reply" mid-conversation.
  */
+const OK_PROMPT = 'Reply with exactly OK and nothing else.'
+
+/** Filler for the long-payload probe (~1.2k words ≈ 1.6k tokens). */
+const LONG_FILLER = Array.from({ length: 60 }, (_, index) =>
+  `Paragraph ${index + 1}. The maintenance log records routine checks of the relay station, `
+  + 'including voltage readings, coolant levels and antenna alignment, together with the '
+  + 'operator notes for that shift. Nothing unusual was reported during this interval. ').join('')
+
 const TASKS = [
   {
     id: 'ok',
     quick: true,
-    weight: 0.15,
-    prompt: 'Reply with exactly OK and nothing else.',
+    gate: true,
+    weight: 0.12,
+    prompt: OK_PROMPT,
+    check: text => /^\W*ok\W*$/i.test(text.trim()),
+  },
+  {
+    id: 'stab',
+    quick: true,
+    stability: true,
+    repeats: 2,
+    weight: 0,
+    prompt: OK_PROMPT,
     check: text => /^\W*ok\W*$/i.test(text.trim()),
   },
   {
     id: 'math',
-    weight: 0.20,
+    weight: 0.16,
     prompt: 'What is 17 multiplied by 23? Answer with only the number.',
     check: text => /(^|\D)391(\D|$)/.test(text.replace(/,/g, '')),
   },
   {
     id: 'json',
-    weight: 0.25,
+    weight: 0.20,
     prompt: 'Return exactly this JSON object and nothing else: {"city":"Paris","ok":true}',
     check: text => {
       const match = text.match(/\{[\s\S]*\}/)
@@ -81,15 +107,35 @@ const TASKS = [
   },
   {
     id: 'zh',
-    weight: 0.20,
+    weight: 0.16,
     prompt: '把「蓝色」这个词重复三次，用单个空格分隔，只输出结果，不要任何解释。',
     check: text => (text.match(/蓝色/g) ?? []).length === 3,
   },
   {
     id: 'reason',
-    weight: 0.20,
+    weight: 0.16,
     prompt: '分步推理：从北京坐高铁到上海要多久？只输出最终结论（数字+单位）。',
     check: text => /(\d+(\.\d+)?\s*(小时|分钟|h|min))/i.test(text),
+  },
+  {
+    id: 'multi',
+    weight: 0.10,
+    // Reasoning routes spend tokens on the trace before any text, so these two
+    // probes get a larger cap than the one-line checks.
+    maxTokens: 256,
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: '记住这个数字：42。只回复 OK。' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'OK' }] },
+      { role: 'user', content: [{ type: 'text', text: '我刚才让你记住的数字是多少？只输出数字。' }] },
+    ],
+    check: text => /(^|\D)42(\D|$)/.test(text),
+  },
+  {
+    id: 'long',
+    weight: 0.10,
+    maxTokens: 256,
+    prompt: `${LONG_FILLER}\n\n以上是设备巡检日志。请只输出这一行：LONG_OK`,
+    check: text => /LONG_OK/.test(text),
   },
 ]
 
@@ -380,7 +426,7 @@ export function createBench({ ctx, logger = console, config = {} }) {
           Promise.resolve(ctx.llm.prepareCall({
             provider: target.provider,
             model: target.model,
-            maxTokens: MAX_OUTPUT_TOKENS,
+            maxTokens: task.maxTokens ?? MAX_OUTPUT_TOKENS,
           }, callSignal)),
           PREPARE_TIMEOUT_MS,
           callSignal,
@@ -400,7 +446,7 @@ export function createBench({ ctx, logger = console, config = {} }) {
       }
       const stream = prepared.stream({
         ...prepared.config,
-        messages: [{ role: 'user', content: [{ type: 'text', text: task.prompt }] }],
+        messages: task.messages ?? [{ role: 'user', content: [{ type: 'text', text: task.prompt }] }],
         signal: callSignal,
       })
       for await (const chunk of stream) {
@@ -494,32 +540,60 @@ export function createBench({ ctx, logger = console, config = {} }) {
     const plan = mode === 'deep' ? TASKS : TASKS.filter(task => task.quick)
     const tasks = []
     for (const task of plan) {
-      const result = await runTask(target, task, mode, signal)
-      tasks.push(result)
-      // The first task is the availability gate: a route that cannot answer one
-      // trivial prompt has nothing left to measure, so the rest is skipped to
-      // avoid burning quota on it.
-      if (tasks.length === 1 && !result.answered) {
-        return {
-          ...base,
-          status: signal.aborted ? 'cancelled' : 'error',
-          failure: result.failure,
-          tasks: tasks.map(toTaskView),
-          contextWindow,
-          reasoning,
-          totalMs: Date.now() - started,
-          quotaScore: base.quota.score,
-          ttftScore: 0,
-          throughputScore: 0,
-          capabilityScore: 0,
-          score: 0,
+      const repeats = task.stability ? Math.max(1, Number(task.repeats) || 2) : 1
+      const runs = []
+      for (let attempt = 0; attempt < repeats; attempt++) {
+        const result = await runTask(target, task, mode, signal)
+        runs.push(result)
+        // The first probe is the availability gate: a route that cannot answer
+        // one trivial prompt has nothing left to measure, so the rest is
+        // skipped to avoid burning quota on it.
+        if (attempt === 0 && plan[0] === task && !result.answered) {
+          return {
+            ...base,
+            status: signal.aborted ? 'cancelled' : 'error',
+            failure: result.failure,
+            tasks: tasks.map(toTaskView).concat([toTaskView(result)]),
+            contextWindow,
+            reasoning,
+            totalMs: Date.now() - started,
+            quotaScore: base.quota.score,
+            ttftScore: 0,
+            throughputScore: 0,
+            stabilityScore: 0,
+            capabilityScore: 0,
+            score: 0,
+          }
         }
+        if (signal.aborted) break
       }
+      const answeredCount = runs.filter(item => item.answered).length
+      const first = runs[0] ?? {}
+      const rateSamples = runs.filter(item => Number.isFinite(item.tokensPerSecond) && item.tokensPerSecond > 0)
+      tasks.push({
+        ...first,
+        // A repeated probe only counts as correct when every attempt was.
+        ok: runs.length > 0 && runs.every(item => item.ok),
+        answered: answeredCount === runs.length,
+        attempts: runs.length,
+        answeredCount,
+        failure: first.failure,
+        tokensPerSecond: rateSamples.length > 0
+          ? rateSamples.reduce((sum, item) => sum + item.tokensPerSecond, 0) / rateSamples.length
+          : first.tokensPerSecond,
+      })
       if (signal.aborted) break
     }
 
     const first = tasks[0]
     const answered = tasks.some(task => task.answered)
+    // Reliability counts every individual attempt, not just distinct tasks: the
+    // repeated probe is what exposes a route that answers once and then dies.
+    const attempts = tasks.reduce((sum, task) => sum + (Number(task.attempts) || 1), 0)
+    const answeredCount = tasks.reduce(
+      (sum, task) => sum + (Number.isFinite(task.answeredCount) ? task.answeredCount : (task.answered ? 1 : 0)),
+      0,
+    )
     const totalMs = Date.now() - started
     const okCount = tasks.filter(task => task.ok).length
     // Weighted task score: sum of (weight * pass) for deep mode, simple ratio for quick
@@ -555,10 +629,13 @@ export function createBench({ ctx, logger = console, config = {} }) {
       contextWindow,
       reasoning,
       taskScore,
+      attempts,
+      answeredCount,
     }
     row.capabilityScore = capabilityScore({ taskScore, contextWindow, reasoning })
     row.ttftScore = row.status === 'ok' ? ttftScore(row.ttftMs) : 0
     row.throughputScore = row.status === 'ok' ? throughputScore(row.tokensPerSecond, row.chunkCount) : 0
+    row.stabilityScore = stabilityScore(row)
     row.quotaScore = row.quota.score
     row.score = compositeScore(row, weights)
     return row
@@ -702,8 +779,8 @@ export function createBench({ ctx, logger = console, config = {} }) {
     const lines = [
       `模型优选结果（${run.mode === 'deep' ? '深度模式' : '快速模式'}，${when}，共 ${rows.length} 个）`,
       '',
-      '| # | 模型 | 提供方 | 综合 | 可用性 | 首字 | 吞吐 | 能力 | 额度 |',
-      '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+      '| # | 模型 | 提供方 | 综合 | 可用性 | 稳定 | 首字 | 吞吐 | 能力 | 额度 |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
     ]
     for (const row of rows) {
       const ok = row.status === 'ok'
@@ -713,6 +790,9 @@ export function createBench({ ctx, logger = console, config = {} }) {
         row.providerName,
         row.score,
         ok ? '可用' : `失败·${row.failure?.kind ?? 'error'}`,
+        Number.isFinite(row.attempts) && row.attempts > 0
+          ? `${row.answeredCount ?? 0}/${row.attempts}`
+          : '—',
         Number.isFinite(row.ttftMs) ? `${Math.round(row.ttftMs)} ms` : '—',
         Number.isFinite(row.tokensPerSecond) && row.tokensPerSecond > 0 ? `${row.tokensPerSecond.toFixed(1)} tok/s` : '—',
         row.capabilityScore ?? 0,

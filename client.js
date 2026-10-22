@@ -24,8 +24,8 @@ window.__ModuleLoader__.load({
         run: 'Run test',
         stop: 'Stop',
         mode: 'Mode',
-        modeQuick: 'Quick · 1 request/model',
-        modeDeep: 'Deep · 4 tasks/model',
+        modeQuick: 'Quick · 3 requests/model',
+        modeDeep: 'Deep · 8 probes/model',
         concurrency: 'Parallel',
         limit: 'Models',
         limitAll: 'All',
@@ -36,6 +36,8 @@ window.__ModuleLoader__.load({
         colProvider: 'Provider',
         colScore: 'Score',
         colAvailability: 'Status',
+        colStability: 'Stable',
+        stabilityTitle: 'How many probes actually came back (repeats + multi-turn + long payload)',
         colTtft: 'TTFT',
         colThroughput: 'Throughput',
         colCapability: 'Capability',
@@ -63,8 +65,10 @@ window.__ModuleLoader__.load({
         detailTotal: 'Total time',
         detailModalities: 'Inputs',
         detailProvider: 'Provider route',
-        weights: 'Availability {a}% · TTFT {t}% · Throughput {p}% · Capability {c}% · Quota {q}%',
-        hint: 'Quick mode sends one tiny request per model for everyday checks; deep mode adds three more deterministic tasks.',
+        detailStability: 'Answered probes',
+        detailDropped: 'dropped some calls',
+        weights: 'Availability {a}% · Stability {s}% · TTFT {t}% · Throughput {p}% · Capability {c}% · Quota {q}%',
+        hint: 'Quick mode repeats a tiny request three times, so an intermittent route is caught early; deep mode adds arithmetic, JSON, Chinese, reasoning, multi-turn and long-payload probes.',
         refresh: 'Refresh',
         expand: 'Details',
         collapse: 'Hide',
@@ -96,6 +100,9 @@ window.__ModuleLoader__.load({
         recentLabel: 'Recent',
         recentEmpty: 'No recent models.',
         taskOk: 'Instruction',
+        taskStab: 'Stability',
+        taskMulti: 'Multi-turn',
+        taskLong: 'Long payload',
         taskMath: 'Arithmetic',
         taskJson: 'JSON output',
         taskZh: 'Chinese instruction',
@@ -111,8 +118,8 @@ window.__ModuleLoader__.load({
         run: '开始测试',
         stop: '停止',
         mode: '模式',
-        modeQuick: '快速 · 每模型 1 次请求',
-        modeDeep: '深度 · 每模型 4 项任务',
+        modeQuick: '快速 · 每模型 3 次请求',
+        modeDeep: '深度 · 每模型 8 项探测',
         concurrency: '并发',
         limit: '模型数',
         limitAll: '全部',
@@ -123,6 +130,8 @@ window.__ModuleLoader__.load({
         colProvider: '提供方',
         colScore: '综合',
         colAvailability: '状态',
+        colStability: '稳定',
+        stabilityTitle: '实际有回复的探测次数（重复调用 + 多轮对话 + 长输入）',
         colTtft: '首字',
         colThroughput: '吞吐',
         colCapability: '能力',
@@ -150,8 +159,10 @@ window.__ModuleLoader__.load({
         detailTotal: '总耗时',
         detailModalities: '输入模态',
         detailProvider: '提供方路由',
-        weights: '可用性 {a}% · 首字 {t}% · 吞吐 {p}% · 能力 {c}% · 额度 {q}%',
-        hint: '快速模式每模型 1 次极小请求，适合日常体检；深度模式再加 3 项确定性任务，更准但更耗额度。',
+        detailStability: '有效探测',
+        detailDropped: '有调用掉线',
+        weights: '可用性 {a}% · 稳定 {s}% · 首字 {t}% · 吞吐 {p}% · 能力 {c}% · 额度 {q}%',
+        hint: '快速模式把同一个极小请求重复 3 次，能提前发现间歇性掉线；深度模式再加算术、JSON、中文、推理、多轮对话与长输入探测。',
         refresh: '刷新',
         expand: '明细',
         collapse: '收起',
@@ -183,6 +194,9 @@ window.__ModuleLoader__.load({
         recentLabel: '常用',
         recentEmpty: '暂无常用模型。',
         taskOk: '指令遵循',
+        taskStab: '稳定性',
+        taskMulti: '多轮对话',
+        taskLong: '长输入',
         taskMath: '算术',
         taskJson: 'JSON 输出',
         taskZh: '中文指令',
@@ -285,7 +299,7 @@ window.__ModuleLoader__.load({
     }
 
     function taskLabel(locale, id) {
-      const key = { ok: 'taskOk', math: 'taskMath', json: 'taskJson', zh: 'taskZh' }[id]
+      const key = { ok: 'taskOk', stab: 'taskStab', math: 'taskMath', json: 'taskJson', zh: 'taskZh', reason: 'taskReason', multi: 'taskMulti', long: 'taskLong' }[id]
       return key === undefined ? id : translate(locale, key)
     }
 
@@ -297,6 +311,7 @@ window.__ModuleLoader__.load({
       ttftMs: 'number',
       tokensPerSecond: 'number',
       capabilityScore: 'number',
+      stabilityScore: 'number',
       availability: 'text',
     }
 
@@ -384,6 +399,7 @@ window.__ModuleLoader__.load({
 .mr-tone-error { background: var(--dsw-alias-state-error-primary); }
 .mr-tone-idle { background: var(--dsw-alias-state-idle-primary); }
 .mr-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mr-drop { color: var(--dsw-alias-state-warn-primary); font-weight: 600; }
 .mr-muted { color: var(--dsw-alias-label-secondary); }
 .mr-detail td { background: var(--dsw-alias-bg-base); padding: 12px 14px; }
 .mr-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 18px; }
@@ -720,6 +736,7 @@ window.__ModuleLoader__.load({
                     header('providerName', t('colProvider')),
                     header('score', t('colScore')),
                     header('availability', t('colAvailability')),
+                    header('stabilityScore', t('colStability')),
                     header('ttftMs', t('colTtft')),
                     header('tokensPerSecond', t('colThroughput')),
                     header('capabilityScore', t('colCapability')),
@@ -759,6 +776,11 @@ window.__ModuleLoader__.load({
                           : row.status === 'error'
                             ? `${t('statusError')}${row.failure?.kind ? ` · ${row.failure.kind}` : ''}`
                             : running ? t('statusRunning') : t('statusPending'))),
+                      h('td', { key: 'stability', className: 'mr-num', title: t('stabilityTitle') },
+                        Number.isFinite(row.attempts) && row.attempts > 0
+                          ? h('span', { className: row.answeredCount < row.attempts ? 'mr-drop' : '' },
+                            `${row.answeredCount ?? 0}/${row.attempts}`)
+                          : '—'),
                       h('td', { key: 'ttft', className: 'mr-num' }, formatMs(row.ttftMs)),
                       h('td', { key: 'tps', className: 'mr-num' }, formatRate(row.tokensPerSecond)),
                       h('td', { key: 'cap', className: 'mr-num' }, row.capabilityScore ?? '—'),
@@ -782,12 +804,15 @@ window.__ModuleLoader__.load({
                     }, cells)
                     if (!isOpen) return main
                     const detail = h('tr', { key: `${row.key}:detail`, className: 'mr-detail' },
-                      h('td', { colSpan: 9 },
+                      h('td', { colSpan: 10 },
                         h('div', { className: 'mr-detail-grid' },
                           row.failure !== undefined
                             ? detailItem(t('detailError'), `${row.failure.kind} · ${row.failure.code ?? ''} ${row.failure.message ?? ''}`)
                             : null,
                           detailItem(t('detailProvider'), row.provider),
+                          detailItem(t('detailStability'), Number.isFinite(row.attempts) && row.attempts > 0
+                            ? `${row.answeredCount ?? 0}/${row.attempts}${row.answeredCount < row.attempts ? ` · ${t('detailDropped')}` : ''}`
+                            : '—'),
                           detailItem(t('detailContext'), formatContext(row.contextWindow)),
                           detailItem(t('detailReasoning'), row.reasoning === undefined ? '—' : (row.reasoning ? t('yes') : t('no'))),
                           detailItem(t('detailModalities'), (row.modalities ?? []).join(', ') || '—'),
@@ -829,11 +854,12 @@ window.__ModuleLoader__.load({
 
         h('div', { className: 'mr-foot' },
           h('span', {}, t('weights', {
-            a: Math.round(weights.availability * 100),
-            t: Math.round(weights.ttft * 100),
-            p: Math.round(weights.throughput * 100),
-            c: Math.round(weights.capability * 100),
-            q: Math.round(weights.quota * 100),
+            a: Math.round((weights.availability ?? 0) * 100),
+            s: Math.round((weights.stability ?? 0) * 100),
+            t: Math.round((weights.ttft ?? 0) * 100),
+            p: Math.round((weights.throughput ?? 0) * 100),
+            c: Math.round((weights.capability ?? 0) * 100),
+            q: Math.round((weights.quota ?? 0) * 100),
           })),
           h('span', {}, '·'),
           h('span', {}, t('tableNote')),

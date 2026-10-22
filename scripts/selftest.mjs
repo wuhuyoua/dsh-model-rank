@@ -37,9 +37,34 @@ const PERSONAS = {
     if (prompt.includes('"city"')) return '{"city":"Paris","ok":true}'
     if (prompt.includes('蓝色')) return '蓝色 蓝色 蓝色'
     if (prompt.includes('高铁')) return '约 4.5 小时'
+    if (prompt.includes('记住的数字')) return '42'
+    if (prompt.includes('巡检日志')) return 'LONG_OK'
     return 'OK'
   },
   terse: prompt => (prompt.includes('exactly OK') ? 'OK' : 'no'),
+}
+
+/** A route that answers once and then dies: the case a single probe misses. */
+let flakyCalls = 0
+async function* flakyChunks(answer) {
+  flakyCalls++
+  if (flakyCalls % 2 === 0) {
+    yield { type: 'finish', reason: { kind: 'error', failure: { message: 'upstream closed the stream', code: 'UPSTREAM_5XX' } } }
+    return
+  }
+  yield* chunks(answer)
+}
+
+/** Last user message text, so multi-turn probes are read like a real request. */
+function lastUserText(messages) {
+  const list = Array.isArray(messages) ? messages : []
+  for (let index = list.length - 1; index >= 0; index--) {
+    if (list[index]?.role !== 'user') continue
+    const content = list[index]?.content
+    if (Array.isArray(content)) return content.map(part => part?.text ?? '').join(' ')
+    return String(content ?? '')
+  }
+  return ''
 }
 
 function createContext({ fail }) {
@@ -53,7 +78,7 @@ function createContext({ fail }) {
       { id: 'good-fast', name: 'Good Fast', inputModalities: ['text'] },
       { id: 'good-slow', name: 'Good Slow', inputModalities: ['text', 'image'] },
     ],
-    beta: [{ id: 'terse', name: 'Terse', inputModalities: ['text'] }],
+    beta: [{ id: 'terse', name: 'Terse', inputModalities: ['text'] }, { id: 'flaky', name: 'Flaky', inputModalities: ['text'] }],
     broken: [{ id: 'unreachable', name: 'Unreachable' }],
   }
   return {
@@ -75,12 +100,13 @@ function createContext({ fail }) {
         if (fail === `${provider}/${model}`) {
           throw Object.assign(new Error('insufficient balance'), { status: 402, code: 'INSUFFICIENT_BALANCE' })
         }
-        const persona = model.startsWith('good') ? 'good' : 'terse'
+        const persona = model.startsWith('good') ? 'good' : model === 'flaky' ? 'flaky' : 'terse'
         const delay = model.includes('slow') ? { ttftMs: 260, tokenDelayMs: 12 } : { ttftMs: 20, tokenDelayMs: 1 }
         return {
           config: { provider, model, maxTokens: 96 },
           stream: options => {
-            const prompt = String(options?.messages?.[0]?.content?.[0]?.text ?? '')
+            const prompt = lastUserText(options?.messages)
+            if (persona === 'flaky') return flakyChunks('OK')
             return chunks(PERSONAS[persona](prompt), delay)
           },
         }
@@ -125,6 +151,18 @@ const terse = state.rows.find(row => row.model === 'terse')
 assert.ok(terse, 'terse model is in results')
 assert.equal(terse.status, 'ok', 'answering badly is still available')
 assert.ok(terse.capabilityScore < fastest.capabilityScore, 'but capability separates them')
+
+// Reliability: a route that answers the first call and drops the second must be
+// demoted, which is the whole reason `stability` exists.
+const flaky = state.rows.find(row => row.model === 'flaky')
+assert.ok(flaky, 'the flaky model is in results')
+assert.equal(flaky.status, 'ok', 'the flaky route still passed the availability gate')
+assert.ok(flaky.attempts > 1, 'several attempts were made')
+assert.ok(flaky.answeredCount < flaky.attempts, 'intermittent failures are counted')
+assert.ok(flaky.stabilityScore < 100, 'a dropping route is not a perfect stability score')
+assert.ok(flaky.score < fastest.score, 'a dropping route ranks below a steady one')
+assert.ok(fastest.stabilityScore === 100, 'a steady route keeps a full stability score')
+assert.ok(fastest.attempts >= 3, 'quick-capable probes are repeated')
 
 assert.ok(state.rows.every(row => row.rank >= 1), 'every row carries a rank')
 for (let index = 1; index < state.rows.length; index++) {
