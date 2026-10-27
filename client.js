@@ -106,6 +106,11 @@ window.__ModuleLoader__.load({
         rankByThroughput: 'Throughput',
         rankByStability: 'Stability',
         rankByQuota: 'Quota',
+        modality: 'Input',
+        modalityAll: 'Any input',
+        modalityText: 'Text only',
+        modalityImage: 'Accepts images',
+        modalityEmpty: 'No model with that input modality.',
         taskOk: 'Instruction',
         taskStab: 'Stability',
         taskMulti: 'Multi-turn',
@@ -207,6 +212,11 @@ window.__ModuleLoader__.load({
         rankByThroughput: '吞吐',
         rankByStability: '稳定性',
         rankByQuota: '额度',
+        modality: '输入',
+        modalityAll: '不限输入',
+        modalityText: '纯文字',
+        modalityImage: '支持图片',
+        modalityEmpty: '没有符合该输入模态的模型。',
         taskOk: '指令遵循',
         taskStab: '稳定性',
         taskMulti: '多轮对话',
@@ -315,6 +325,21 @@ window.__ModuleLoader__.load({
     function taskLabel(locale, id) {
       const key = { ok: 'taskOk', stab: 'taskStab', math: 'taskMath', json: 'taskJson', zh: 'taskZh', reason: 'taskReason', multi: 'taskMulti', long: 'taskLong' }[id]
       return key === undefined ? id : translate(locale, key)
+    }
+
+    /**
+     * Input-modality filter: `all` | `text` | `image`.
+     *
+     * The LLM catalogue only reports `inputModalities` — what a route accepts —
+     * so this separates "text in" from "text and images in". It says nothing
+     * about what the route produces: a route that accepts images still answers
+     * with text, and image generation is not something the catalogue exposes.
+     */
+    function matchesModality(row, filter) {
+      if (filter === undefined || filter === 'all') return true
+      const modalities = Array.isArray(row?.modalities) ? row.modalities : []
+      const acceptsImages = modalities.includes('image')
+      return filter === 'image' ? acceptsImages : !acceptsImages
     }
 
     const SORTABLE = {
@@ -456,6 +481,7 @@ window.__ModuleLoader__.load({
 .mr-scoretext-error { color: var(--dsw-alias-state-error-primary); }
 .mr-dock-hint { font-size: 10.5px; }
 .mr-dock-recent { display: inline-flex; }
+.mr-dock-modality { min-width: 0; width: auto; max-width: none; height: 22px; padding: 0 6px; font-size: 11px; }
 .mr-dock-recent-select { height: 24px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 11.5px; cursor: pointer; min-width: 160px; max-width: 220px; }
 .mr-dock-recent-select:hover { border-color: var(--dsw-alias-brand-primary); }
 .mr-dock-recent-select:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
@@ -488,6 +514,7 @@ window.__ModuleLoader__.load({
         try { return new Set(JSON.parse(localStorage.getItem('model-rank-favorites') || '[]')) } catch { return new Set() }
       })
       const [showFavoritesOnly, setShowFavoritesOnly] = useState(false)
+      const [modalityFilter, setModalityFilter] = useState('all')
       const inFlight = useRef(false)
 
       // One source of truth for ordering: the toolbar dropdown and the table
@@ -584,6 +611,9 @@ window.__ModuleLoader__.load({
         if (showFavoritesOnly) {
           filtered = filtered.filter(row => favorites.has(row.key))
         }
+        if (modalityFilter !== 'all') {
+          filtered = filtered.filter(row => matchesModality(row, modalityFilter))
+        }
         // Availability is the hard gate: an unavailable route never outranks a
         // working one, whatever dimension the user picked. Inside each group the
         // selected dimension decides the order.
@@ -593,7 +623,7 @@ window.__ModuleLoader__.load({
           ...sortRows(available, sort.key, sort.direction),
           ...sortRows(unavailable, sort.key, sort.direction),
         ]
-      }, [provider, sort, showFavoritesOnly, state?.rows, favorites])
+      }, [provider, sort, showFavoritesOnly, modalityFilter, state?.rows, favorites])
 
       const providers = useMemo(() => {
         const list = Array.isArray(state?.providers) ? state.providers : []
@@ -741,6 +771,17 @@ window.__ModuleLoader__.load({
               },
             },
               RANK_OPTIONS.map(opt => h('option', { key: opt.key, value: opt.key }, opt.label)))),
+          h('label', { className: 'mr-field' },
+            h('span', { className: 'mr-field-label' }, t('modality')),
+            h('select', {
+              className: 'mr-select',
+              value: modalityFilter,
+              disabled: running,
+              onChange: event => setModalityFilter(event.target.value),
+            },
+              h('option', { value: 'all' }, t('modalityAll')),
+              h('option', { value: 'text' }, t('modalityText')),
+              h('option', { value: 'image' }, t('modalityImage')))),
           h('div', { className: 'mr-spacer' }),
           h('button', {
             type: 'button',
@@ -769,7 +810,13 @@ window.__ModuleLoader__.load({
         h('div', { className: 'mr-table-wrap' },
           rows.length === 0
             ? h('div', { className: 'mr-empty' },
-              h('div', {}, state === undefined ? '…' : (providers.length === 0 ? t('noProviders') : t('empty'))),
+              h('div', {}, state === undefined
+                ? '…'
+                : providers.length === 0
+                  ? t('noProviders')
+                  : (Array.isArray(state?.rows) && state.rows.length > 0 && modalityFilter !== 'all')
+                    ? t('modalityEmpty')
+                    : t('empty')),
               h('div', { className: 'mr-note' }, t('hint')))
             : h('div', { className: 'mr-scroll' },
               h('table', { className: 'mr-table' },
@@ -951,6 +998,7 @@ window.__ModuleLoader__.load({
           return merged.slice(0, 10)
         } catch { return [] }
       })
+      const [modalityFilter, setModalityFilter] = useState('all')
       const inFlight = useRef(false)
 
       const load = useCallback(async () => {
@@ -1042,7 +1090,12 @@ window.__ModuleLoader__.load({
 
       const running = state?.running === true
       const progress = state?.progress ?? { done: 0, total: 0 }
-      const rows = Array.isArray(state?.rows) ? state.rows.slice(0, 5) : []
+      // The filter applies before the top-five cut, so picking "text only"
+      // shows the five best text routes instead of hiding image ones.
+      const allRows = Array.isArray(state?.rows) ? state.rows : []
+      const rows = (modalityFilter === 'all'
+        ? allRows
+        : allRows.filter(row => matchesModality(row, modalityFilter))).slice(0, 5)
       const best = rows[0]
       const tone = best === undefined ? 'idle' : scoreTone(best.score ?? 0, best)
       const currentDefault = state?.defaultSelection
@@ -1139,12 +1192,25 @@ window.__ModuleLoader__.load({
           ? h('div', { className: 'mr-dock-panel' },
             h('div', { className: 'mr-dock-head' },
               h('span', {}, t('dockTop')),
+              h('select', {
+                className: 'mr-dock-recent-select mr-dock-modality',
+                value: modalityFilter,
+                title: t('modality'),
+                'aria-label': t('modality'),
+                onChange: event => setModalityFilter(event.target.value),
+              },
+                h('option', { value: 'all' }, t('modalityAll')),
+                h('option', { value: 'text' }, t('modalityText')),
+                h('option', { value: 'image' }, t('modalityImage'))),
               h('span', { className: 'mr-dock-default' },
                 currentDefault === undefined
                   ? t('dockShowAll')
                   : t('dockCurrent', { model: `${currentDefault.provider}/${currentDefault.model}` }))),
             rows.length === 0
-              ? h('div', { className: 'mr-note' }, error === '' ? t('dockEmpty') : error)
+              ? h('div', { className: 'mr-note' },
+                error === ''
+                  ? (modalityFilter !== 'all' && allRows.length > 0 ? t('modalityEmpty') : t('dockEmpty'))
+                  : error)
               : rows.map(row => h('div', { key: row.key, className: 'mr-dock-row' },
                 h('span', { className: 'mr-dock-rank' }, `#${row.rank}`),
                 h('span', { className: 'mr-dock-name', title: row.model }, row.name ?? row.model),

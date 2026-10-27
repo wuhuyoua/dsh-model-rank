@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-rank",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "type": "module",
   "description": "Benchmark every LLM route mounted in DeepSeek Harness and rank the models by availability, stability, remaining quota, capability and speed — with a favorites dropdown under the composer and a model_rank tool for the agent.",
   "keywords": [
